@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Actual Guardrails Implementation — Motadata MSP AI Assistant</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: "Segoe UI", Roboto, Arial, sans-serif;
+    background: #0a1230;
+    color: #e8edff;
+    padding: 32px;
+    width: 1100px;
+  }
+  .card { background:#0d1a3f; border:1px solid #1e2f6b; border-radius:14px; padding:22px 26px; margin-bottom:18px; }
+  h1 { font-size:30px; font-weight:800; letter-spacing:.5px; }
+  h1 .hl { color:#ffb020; }
+  .sub { color:#7fa8ff; margin-top:6px; font-size:15px; }
+  .tag { display:inline-block; font-size:11px; font-weight:700; padding:3px 10px; border-radius:20px; margin-left:8px; vertical-align:middle;}
+  .tag.state { background:#3a1414; color:#ff8a8a; border:1px solid #6b1f1f;}
+  h2 { font-size:16px; color:#9db8ff; margin-bottom:14px; text-transform:uppercase; letter-spacing:1px;}
+  .flow { display:flex; align-items:stretch; gap:8px; flex-wrap:nowrap; }
+  .node { flex:1; border-radius:10px; padding:12px 10px; text-align:center; font-size:12.5px; position:relative; min-height:120px; display:flex; flex-direction:column; }
+  .node .t { font-weight:700; font-size:13px; margin-bottom:6px; }
+  .node .d { font-size:11px; opacity:.85; line-height:1.35; }
+  .arrow { align-self:center; color:#4a63b8; font-size:20px; }
+  .n-user { background:#12224e; border:1px solid #24397d;}
+  .n-gw { background:#1a1147; border:1px solid #4b2f9e;}
+  .n-run { background:#0e2440; border:1px solid #245c8f;}
+  .n-tool { background:#151a45; border:1px solid #33409b;}
+  .n-out { background:#0e2a1e; border:1px solid #1f6b47;}
+  .miss { background:#2a1414 !important; border:1px dashed #b3403f !important; }
+  .ok::after { content:"✓ DEPLOYED"; position:absolute; bottom:6px; left:0; right:0; font-size:9.5px; color:#5fd08a; font-weight:700;}
+  .no::after { content:"✗ NOT CONFIGURED"; position:absolute; bottom:6px; left:0; right:0; font-size:9.5px; color:#ff7a7a; font-weight:700;}
+  .partial::after { content:"◐ PARTIAL"; position:absolute; bottom:6px; left:0; right:0; font-size:9.5px; color:#ffc766; font-weight:700;}
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+  .item { background:#0b1738; border:1px solid #1c2c63; border-radius:10px; padding:14px; }
+  .item .h { font-weight:700; font-size:13.5px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;}
+  .item ul { list-style:none; font-size:11.5px; line-height:1.7; }
+  .item li::before { content:"• "; color:#5f7fd0; }
+  .bad { color:#ff8a8a; }
+  .good { color:#5fd08a; }
+  .warn { color:#ffc766; }
+  .pill { font-size:10px; font-weight:700; padding:2px 8px; border-radius:12px; }
+  .pill.y { background:#123524; color:#5fd08a;}
+  .pill.n { background:#351515; color:#ff8a8a;}
+  .pill.p { background:#332611; color:#ffc766;}
+  .footer { text-align:center; font-size:12px; color:#7fa8ff; margin-top:6px;}
+  code { background:#060d24; padding:2px 6px; border-radius:5px; font-size:11px; color:#9fd0ff;}
+</style>
+</head>
+<body>
+  <div class="card" style="text-align:center;">
+    <h1>ACTUAL <span class="hl">GUARDRAILS</span> IMPLEMENTATION <span class="tag state">CURRENT STATE — dev</span></h1>
+    <div class="sub">Motadata MSP AI Assistant · AWS account 001961766007 · us-east-1 · captured 2026-08-31</div>
+  </div>
+
+  <div class="card">
+    <h2>End-to-End Path — What Actually Guards Each Hop</h2>
+    <div class="flow">
+      <div class="node n-user"><div class="t">User / SPA</div><div class="d">CloudFront → ALB → Fargate backend</div></div>
+      <div class="arrow">›</div>
+      <div class="node n-gw ok"><div class="t">AgentCore Gateway</div><div class="d">AWS_IAM auth (SigV4). MCP runtimes: Cognito JWT (scope mcp-server/invoke)</div></div>
+      <div class="arrow">›</div>
+      <div class="node n-run miss no"><div class="t">Input Guardrails</div><div class="d">No prompt-injection / jailbreak / PII input filter</div></div>
+      <div class="arrow">›</div>
+      <div class="node n-run"><div class="t">AgentCore Runtime</div><div class="d">Supervisor + 7 A2A specialists reason &amp; act</div></div>
+      <div class="arrow">›</div>
+      <div class="node n-tool ok"><div class="t">Tools / MCP</div><div class="d">Jira, AWS APIs, CloudWatch via Gateway targets</div></div>
+      <div class="arrow">›</div>
+      <div class="node n-out miss no"><div class="t">Output Guardrails</div><div class="d">No PII / secret-leak / unsafe-content output filter</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Control Coverage vs. Reference Model</h2>
+    <div class="grid">
+      <div class="item">
+        <div class="h">1 · Input Protection <span class="pill n">MISSING</span></div>
+        <ul>
+          <li class="bad">No Bedrock Guardrail attached</li>
+          <li class="bad">No prompt-injection detection</li>
+          <li class="bad">No jailbreak detection</li>
+          <li class="bad">No PII/secret input filter</li>
+          <li>IAM has <code>bedrock:ApplyGuardrail</code> but nothing to apply</li>
+        </ul>
+      </div>
+      <div class="item">
+        <div class="h">2 · Authorization (Cedar) <span class="pill n">MISSING</span></div>
+        <ul>
+          <li class="bad">No AgentCore Policy Engine deployed</li>
+          <li class="bad">No Cedar policies (allow/deny per tool)</li>
+          <li>Tool access is all-or-nothing via IAM, not per-action</li>
+        </ul>
+      </div>
+      <div class="item">
+        <div class="h">3 · Protect Tools &amp; MCP <span class="pill p">PARTIAL</span></div>
+        <ul>
+          <li class="good">Gateway auth = AWS_IAM (no anon access)</li>
+          <li class="good">MCP runtimes gated by Cognito JWT</li>
+          <li class="good">Secrets via AgentCore Identity token vault</li>
+          <li class="bad">No per-tool least-privilege authorization layer</li>
+        </ul>
+      </div>
+      <div class="item">
+        <div class="h">4 · Output Guardrails <span class="pill n">MISSING</span></div>
+        <ul>
+          <li class="bad">No output PII detection</li>
+          <li class="bad">No secret-leak prevention on responses</li>
+          <li class="bad">No unsafe-content suppression</li>
+        </ul>
+      </div>
+      <div class="item">
+        <div class="h">5 · Prevent Gateway Bypass <span class="pill p">PARTIAL</span></div>
+        <ul>
+          <li class="good">Runtimes require IAM/JWT to invoke</li>
+          <li class="warn">Runtimes are PUBLIC network mode</li>
+          <li class="bad">No policy engine enforcing single entry</li>
+        </ul>
+      </div>
+      <div class="item">
+        <div class="h">IAM &amp; Observability <span class="pill p">MIXED</span></div>
+        <ul>
+          <li class="bad">Gateway role = <code>AdministratorAccess</code> (not least-privilege)</li>
+          <li class="good">CloudWatch Logs + Application Signals</li>
+          <li class="good">2 CloudTrail trails (multi-region)</li>
+          <li class="bad">No AWS Config recorder · No GuardDuty found</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Scorecard</h2>
+    <div class="grid" style="grid-template-columns:repeat(4,1fr);">
+      <div class="item"><div class="h">Bedrock Guardrails</div><ul><li class="bad">0 configured</li></ul></div>
+      <div class="item"><div class="h">Cedar Policy Engine</div><ul><li class="bad">Not deployed</li></ul></div>
+      <div class="item"><div class="h">Gateway / JWT Auth</div><ul><li class="good">Present</li></ul></div>
+      <div class="item"><div class="h">Least-Privilege IAM</div><ul><li class="bad">Violated (Admin)</li></ul></div>
+    </div>
+  </div>
+
+  <div class="footer">Reference target: “How to Implement Guardrails in Amazon Bedrock AgentCore”. This diagram reflects the <b>actual deployed state</b>, which is an earlier maturity stage than the reference.</div>
+</body>
+</html>

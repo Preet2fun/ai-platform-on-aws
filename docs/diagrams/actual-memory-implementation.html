@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Actual Memory Management — Motadata MSP AI Assistant</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:"Segoe UI",Roboto,Arial,sans-serif; background:#f4f5fb; color:#1a1f36; padding:32px; width:1100px; }
+  .card { background:#fff; border:1px solid #e3e6f0; border-radius:14px; padding:24px 28px; margin-bottom:18px; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+  h1 { font-size:26px; font-weight:800; color:#232a4d;}
+  .sub { color:#6b73a3; margin-top:6px; font-size:14px;}
+  .tag { display:inline-block; font-size:11px; font-weight:700; padding:3px 10px; border-radius:20px; margin-left:8px; background:#fdeaea; color:#c0392b; border:1px solid #f3c0c0;}
+  h2 { font-size:14px; color:#5b62a0; margin-bottom:16px; text-transform:uppercase; letter-spacing:1px;}
+  .flow { display:flex; align-items:center; gap:6px; }
+  .node { border-radius:10px; padding:14px 12px; text-align:center; font-size:12px; min-width:120px; flex:1;}
+  .node .t { font-weight:700; font-size:13px; margin-bottom:5px;}
+  .node .d { font-size:10.5px; opacity:.8; line-height:1.35;}
+  .app { background:#eef1fb; border:1px solid #c9d2f0;}
+  .stm { background:#e8f0ff; border:2px solid #4a7bd6;}
+  .ltm { background:#eafaf1; border:2px solid #27ae60;}
+  .arrow { color:#9aa3c7; font-size:20px; font-weight:700;}
+  .strat { background:#f6effc; border:2px dashed #9b59b6; border-radius:12px; padding:16px; margin-top:8px;}
+  .strat .h { font-weight:700; color:#7d3c98; margin-bottom:10px; font-size:13px;}
+  .strat-row { display:flex; gap:10px; }
+  .sbox { flex:1; border-radius:8px; padding:10px; font-size:11px; text-align:center;}
+  .have { background:#eafaf1; border:1px solid #27ae60;}
+  .miss { background:#fdeaea; border:1px solid #e74c3c; opacity:.9;}
+  .sbox .st { font-weight:700; font-size:12px; margin-bottom:4px;}
+  .badge { font-size:9.5px; font-weight:700; padding:2px 7px; border-radius:10px;}
+  .badge.y { background:#d5f5e3; color:#1e8449;}
+  .badge.n { background:#fadbd8; color:#c0392b;}
+  table { width:100%; border-collapse:collapse; font-size:12px;}
+  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid #eceef6;}
+  th { color:#5b62a0; font-size:11px; text-transform:uppercase; letter-spacing:.5px;}
+  .yes { color:#1e8449; font-weight:700;}
+  .no { color:#c0392b; font-weight:700;}
+  .footer { text-align:center; font-size:12px; color:#6b73a3;}
+  code { background:#f0f2fa; padding:2px 6px; border-radius:5px; font-size:11px; color:#5b3d8a;}
+</style>
+</head>
+<body>
+  <div class="card" style="text-align:center;">
+    <h1>ACTUAL MEMORY MANAGEMENT <span class="tag">STM-ONLY ON LIVE AGENTS</span></h1>
+    <div class="sub">Motadata MSP AI Assistant · 14 AgentCore Memory resources · us-east-1 · captured 2026-08-31</div>
+  </div>
+
+  <div class="card">
+    <h2>What the Live Agents Actually Use (supervisor + 7 specialists + 3 MCP)</h2>
+    <div class="flow">
+      <div class="node app"><div class="t">Agentic App</div><div class="d">Backend → Supervisor → A2A specialists</div></div>
+      <div class="arrow">→</div>
+      <div class="node stm"><div class="t">Short-Term Memory</div><div class="d">Raw conversational events only<br>expiry 30 days</div></div>
+      <div class="arrow">→</div>
+      <div class="node app"><div class="t">Agentic App</div><div class="d">Reads back recent events in-session</div></div>
+      <div class="arrow" style="opacity:.3;">→</div>
+      <div class="node ltm miss" style="border:2px dashed #e74c3c; background:#fdeaea;"><div class="t" style="color:#c0392b;">Long-Term Memory</div><div class="d">✗ No strategies attached<br><code>strategies: []</code></div></div>
+    </div>
+    <div class="strat">
+      <div class="h">Long-Term Strategy Coverage — per-agent memories (all 12 live *_mem resources)</div>
+      <div class="strat-row">
+        <div class="sbox miss"><div class="st">SUMMARIZATION</div><span class="badge n">NOT ON LIVE AGENTS</span></div>
+        <div class="sbox miss"><div class="st">SEMANTIC</div><span class="badge n">NOT ON LIVE AGENTS</span></div>
+        <div class="sbox miss"><div class="st">USER_PREFERENCE</div><span class="badge n">NONE</span></div>
+        <div class="sbox miss"><div class="st">EPISODIC + Reflection</div><span class="badge n">NONE</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>The Two Memories That DO Have Long-Term Strategies (not wired to runtimes)</h2>
+    <div class="flow">
+      <div class="node app"><div class="t">dev_msp_assistant_memory<br>/ msp_assistant_memory</div><div class="d">expiry 90 days · standalone, not referenced by any runtime env var</div></div>
+      <div class="arrow">→</div>
+      <div class="strat" style="flex:2; margin-top:0;">
+        <div class="h">Strategies present</div>
+        <div class="strat-row">
+          <div class="sbox have"><div class="st">SessionSummaries</div>SUMMARIZATION<br><span class="badge y">ACTIVE</span></div>
+          <div class="sbox have"><div class="st">SemanticFacts</div>SEMANTIC<br><span class="badge y">ACTIVE</span></div>
+          <div class="sbox miss"><div class="st">EPISODIC</div>Reflection<br><span class="badge n">ABSENT</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Gap vs. Episodic Memory Reference (turn extraction → episode extraction → reflection)</h2>
+    <table>
+      <tr><th>Reference capability</th><th>Purpose</th><th>Your state</th></tr>
+      <tr><td>Short-term memory (raw events)</td><td>In-session context</td><td class="yes">✓ Present (all agents, 30d)</td></tr>
+      <tr><td>SUMMARIZATION strategy</td><td>Manage context length</td><td class="no">✗ Only on 2 unwired memories</td></tr>
+      <tr><td>SEMANTIC strategy</td><td>Store facts</td><td class="no">✗ Only on 2 unwired memories</td></tr>
+      <tr><td>USER_PREFERENCE strategy</td><td>Personalization</td><td class="no">✗ Not deployed anywhere</td></tr>
+      <tr><td>Turn extraction</td><td>Segment interactions into turns</td><td class="no">✗ Not deployed</td></tr>
+      <tr><td>Episode extraction</td><td>Structured episodes (goal/outcome)</td><td class="no">✗ Not deployed</td></tr>
+      <tr><td>Cross-episode reflection</td><td>Learn generalizable insights</td><td class="no">✗ Not deployed</td></tr>
+      <tr><td>Vector store retrieval of episodes</td><td>Recall similar past solutions</td><td class="no">✗ Not deployed</td></tr>
+    </table>
+  </div>
+
+  <div class="footer">Reference target: AgentCore <b>episodic memory</b> blog. Live agents run <b>short-term memory only</b>; the semantic + summarization strategies you built exist on two standalone memories that no runtime references.</div>
+</body>
+</html>

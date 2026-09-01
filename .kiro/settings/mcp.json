@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "bedrock-agentcore-mcp-server": {
+      "command": "/opt/homebrew/bin/uvx",
+      "args": ["awslabs.amazon-bedrock-agentcore-mcp-server@latest"],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      },
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}
+

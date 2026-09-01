@@ -1,0 +1,2 @@
+# Per-runtime deps for aws_api_mcp. Inherits the shared stack from the repo root.
+-r ../../requirements.txt

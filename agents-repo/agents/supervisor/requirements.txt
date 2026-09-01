@@ -1,0 +1,2 @@
+# Per-runtime deps for supervisor. Inherits the shared stack from the repo root.
+-r ../../requirements.txt
