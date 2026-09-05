@@ -1,2 +1,0 @@
-# Per-runtime deps for knowledge_a2a. Inherits the shared stack from the repo root.
--r ../../requirements.txt

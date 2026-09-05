@@ -1,2 +1,0 @@
-# Per-runtime deps for aws_knowledge_mcp. Inherits the shared stack from the repo root.
--r ../../requirements.txt

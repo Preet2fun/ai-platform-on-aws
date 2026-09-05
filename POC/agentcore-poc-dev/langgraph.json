@@ -1,0 +1,12 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "cloudwatch_agent": "./agents/runtime_cloudwatch/cloudwatch_a2a_runtime.py:get_graph",
+    "security_agent": "./agents/runtime_security/security_a2a_runtime.py:get_graph",
+    "cost_agent": "./agents/runtime_cost/cost_a2a_runtime.py:get_graph",
+    "advisor_agent": "./agents/runtime_advisor/advisor_a2a_runtime.py:get_graph",
+    "jira_agent": "./agents/runtime_jira/jira_a2a_runtime.py:get_graph",
+    "knowledge_agent": "./agents/runtime_knowledge/knowledge_a2a_runtime.py:get_graph"
+  },
+  "env": ".env"
+}

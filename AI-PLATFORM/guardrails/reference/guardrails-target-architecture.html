@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Guardrails Target Architecture — SRE/RCA/SOC Platform</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:"Segoe UI",Roboto,Arial,sans-serif; background:#0a1230; color:#e8edff; padding:34px; width:1180px; }
+  .card { background:#0d1a3f; border:1px solid #1e2f6b; border-radius:14px; padding:22px 26px; margin-bottom:18px; }
+  h1 { font-size:30px; font-weight:800; letter-spacing:.5px; }
+  h1 .hl { color:#ffb020; }
+  .sub { color:#7fa8ff; margin-top:6px; font-size:15px; }
+  .tag { display:inline-block; font-size:11px; font-weight:700; padding:3px 10px; border-radius:20px; margin-left:8px; vertical-align:middle; background:#12341f; color:#5fd08a; border:1px solid #1f6b3f;}
+  h2 { font-size:15px; color:#9db8ff; margin-bottom:14px; text-transform:uppercase; letter-spacing:1px;}
+  /* pipeline */
+  .flow { display:flex; align-items:stretch; gap:7px; }
+  .node { flex:1; border-radius:10px; padding:12px 9px; text-align:center; font-size:12px; min-height:118px; display:flex; flex-direction:column; justify-content:flex-start;}
+  .node .t { font-weight:700; font-size:12.5px; margin-bottom:6px; }
+  .node .d { font-size:10.5px; opacity:.85; line-height:1.35; }
+  .arrow { align-self:center; color:#4a63b8; font-size:22px; }
+  .n-user { background:#12224e; border:1px solid #24397d;}
+  .n-gw   { background:#1a1147; border:1px solid #4b2f9e;}
+  .n-pe   { background:#101c52; border:1px solid #3550b5;}
+  .n-in   { background:#0e2a1e; border:1px solid #1f6b47;}
+  .n-run  { background:#0e2440; border:1px solid #245c8f;}
+  .n-tool { background:#151a45; border:1px solid #33409b;}
+  .n-out  { background:#0e2a1e; border:1px solid #1f6b47;}
+  .n-resp { background:#12224e; border:1px solid #24397d;}
+  .bypass { margin-top:12px; text-align:center; font-size:12px; color:#ff9a9a; font-weight:600;}
+  .bypass span { border:1px dashed #b3403f; border-radius:8px; padding:4px 12px;}
+  /* five layers */
+  .grid { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; }
+  .item { background:#0b1738; border:1px solid #1c2c63; border-radius:10px; padding:14px 13px; }
+  .item .num { display:inline-flex; width:22px; height:22px; border-radius:50%; background:#2b3f8f; color:#fff; font-weight:700; font-size:12px; align-items:center; justify-content:center; margin-bottom:8px;}
+  .item .h { font-weight:700; font-size:12.5px; margin-bottom:8px; color:#cfe0ff;}
+  .item ul { list-style:none; font-size:11px; line-height:1.65; }
+  .item li::before { content:"✓ "; color:#5fd08a; }
+  .item.deny li::before { content:"✗ "; color:#ff8a8a; }
+  /* footer strip */
+  .strip { display:grid; grid-template-columns:1fr 1fr 1.2fr; gap:14px; }
+  .box { background:#0b1738; border:1px solid #1c2c63; border-radius:10px; padding:14px; }
+  .box .h { font-weight:700; font-size:13px; margin-bottom:8px; color:#9db8ff;}
+  .box ul { list-style:none; font-size:11.5px; line-height:1.7;}
+  .box li::before { content:"• "; color:#5f7fd0;}
+  code { background:#060d24; padding:2px 6px; border-radius:5px; font-size:11px; color:#9fd0ff;}
+  .principle { text-align:center; font-size:15px; color:#cfe0ff; }
+  .principle b { color:#ffb020; }
+  .footer { text-align:center; font-size:12px; color:#7fa8ff; margin-top:4px;}
+</style>
+</head>
+<body>
+  <div class="card" style="text-align:center;">
+    <h1>GUARDRAILS <span class="hl">TARGET ARCHITECTURE</span> <span class="tag">AI-PLATFORM STANDARD</span></h1>
+    <div class="sub">Defense-in-depth for SRE / RCA / SOC agents on Amazon Bedrock AgentCore · Secure input · Control every action · Protect every response</div>
+  </div>
+
+  <div class="card">
+    <h2>End-to-End Guardrail Path</h2>
+    <div class="flow">
+      <div class="node n-user"><div class="t">User / System</div><div class="d">Operators &amp; automated signals</div></div>
+      <div class="arrow">›</div>
+      <div class="node n-gw"><div class="t">AgentCore Gateway</div><div class="d">Single entry point<br/>AWS_IAM / JWT auth</div></div>
+      <div class="arrow">›</div>
+      <div class="node n-pe"><div class="t">Policy Engine (Cedar)</div><div class="d">Authorization + guardrails<br/>ENFORCE · default-deny</div></div>
+      <div class="arrow">›</div>
+      <div class="node n-in"><div class="t">Input Guardrails</div><div class="d">Prompt injection · jailbreak<br/>PII/secrets · toxic</div></div>
+      <div class="arrow">›</div>
+      <div class="node n-run"><div class="t">AgentCore Runtime</div><div class="d">Agent execution<br/>&amp; reasoning</div></div>
+      <div class="arrow">›</div>
+      <div class="node n-tool"><div class="t">Tools / MCP</div><div class="d">Telemetry · SIEM<br/>Cloud APIs · ticketing</div></div>
+      <div class="arrow">›</div>
+      <div class="node n-out"><div class="t">Output Guardrails</div><div class="d">PII · secret-leak<br/>unsafe · suppress</div></div>
+      <div class="arrow">›</div>
+      <div class="node n-resp"><div class="t">Safe Response</div><div class="d">Returned to user</div></div>
+    </div>
+    <div class="bypass"><span>⚠ No Gateway Bypass — users can never invoke the Runtime directly</span></div>
+  </div>
+
+  <div class="card">
+    <h2>The Five Layers</h2>
+    <div class="grid">
+      <div class="item">
+        <div class="num">1</div><div class="h">Input Protection</div>
+        <ul><li>Prompt injection</li><li>Jailbreak attempts</li><li>Malicious instructions</li><li>Sensitive info in input</li></ul>
+      </div>
+      <div class="item">
+        <div class="num">2</div><div class="h">Authorization (Cedar)</div>
+        <ul><li>Which tools allowed</li><li>Which APIs invokable</li><li>Actions needing authz</li><li>Default-deny posture</li></ul>
+      </div>
+      <div class="item deny">
+        <div class="num">3</div><div class="h">Protect Tools &amp; MCP</div>
+        <ul><li>No open DB access</li><li>No open S3</li><li>No open cloud APIs</li><li>Least privilege only</li></ul>
+      </div>
+      <div class="item">
+        <div class="num">4</div><div class="h">Output Guardrails</div>
+        <ul><li>Detect PII</li><li>Prevent secret leak</li><li>Filter unsafe content</li><li>Suppress sensitive</li></ul>
+      </div>
+      <div class="item deny">
+        <div class="num">5</div><div class="h">Prevent Bypass</div>
+        <ul><li>Block direct Runtime</li><li>Resource policy on invoke</li><li>All traffic via Gateway</li><li>VPC mode for sensitive</li></ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="strip">
+      <div class="box">
+        <div class="h">IAM &amp; Permissions</div>
+        <ul><li>Least-privilege gateway role</li><li>Required: <code>bedrock:InvokeGuardrailChecks</code></li><li>Per-runtime scoped roles</li></ul>
+      </div>
+      <div class="box">
+        <div class="h">Observability</div>
+        <ul><li>CloudWatch · CloudTrail</li><li>GuardDuty threat detection</li><li>Log every allow/deny decision</li><li>Alarm on denial spikes</li></ul>
+      </div>
+      <div class="box">
+        <div class="h">Guardrail Categories (Cedar)</div>
+        <ul><li><code>promptAttack</code>: injection, jailbreak, leakage</li><li><code>sensitiveInformation</code>: PII (SSN, card, email…)</li><li><code>contentFilter</code>: violence, hate, misconduct</li><li>Effects: <code>forbid</code> · <code>permit</code> · <code>suppressOutput</code></li></ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="principle"><b>Guardrails + Authorization + IAM + Observability = Safer Agentic AI</b><br/>Build defense in depth. Build trust. Build responsibly.</div>
+  </div>
+  <div class="footer">AI-PLATFORM guardrails standard · verified against AgentCore Policy Engine + Guardrails docs · applies to every PRODUCTION use case (RCA · SRE · Security)</div>
+</body>
+</html>

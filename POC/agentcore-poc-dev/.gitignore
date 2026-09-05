@@ -1,0 +1,43 @@
+.kiro/
+
+# Secrets — never commit real env files (use .env.example as the template)
+.env
+**/.env
+!**/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+**/.venv/
+*.egg-info/
+
+# Node / frontend
+node_modules/
+**/node_modules/
+
+# OS
+.DS_Store
+
+# CDK — auto-generated artifacts and context cache
+infrastructure/cdk/cdk.context.json
+infrastructure/cdk/cdk.out/
+infrastructure/cdk/outputs.json
+infrastructure/cdk/.venv-cdk/
+
+# AgentCore CLI deployment artifacts
+**/.bedrock_agentcore/
+**/.bedrock_agentcore.yaml
+
+# Deployment logs
+deploy-*.log
+
+# Build output
+frontend/dist/
+
+# Runtime frontend config (generated per-environment by deploy.sh)
+frontend/public/config.json
+
+# Per-runtime env vars written by deploy.sh (deployment-specific, passed via --env at deploy)
+agents/*/env_config.txt
+env_config.txt
