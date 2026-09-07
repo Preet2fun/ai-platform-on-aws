@@ -1,18 +1,55 @@
-# Well-Architected — Agentic AI Lens
+# Well-Architected — The 6-Pillar Lens for Agentic AI on AgentCore
 
-Maps the platform to the AWS Well-Architected pillars, with the Generative AI / agentic
-lens. Every PRODUCTION use case is reviewed against this.
+Every component in this reference is analyzed through the six AWS Well-Architected pillars.
+This page defines what each pillar means **for agentic AI on Amazon Bedrock AgentCore**, so
+component analyses stay consistent. It is the shared vocabulary; component folders apply it.
 
-| Pillar | What it means for this platform | Key practices |
-|---|---|---|
-| **Operational Excellence** | Run agents like production services | IaC (CDK), versioned runtimes, observability + evaluations closed loop, runbooks |
-| **Security** | Protect data, models, and actions | Least-privilege IAM, Guardrails, token vault, encryption, HITL for actions (see `../security/`) |
-| **Reliability** | Graceful degradation | Fallback flows, retries, HA egress, stateless runtimes, memory as durable state |
-| **Performance Efficiency** | Right model + right memory | Model selection per agent, episodic memory to reduce redundant reasoning, caching |
-| **Cost Optimization** | Spend follows value | Model tiering, session lifetime tuning, bounded retention, cost evaluators |
-| **Sustainability** | Efficient resource use | ARM64 runtimes, scale-to-zero where possible |
+_Source: [AWS Well-Architected Framework](https://docs.aws.amazon.com/wellarchitected/latest/framework/welcome.html) and its Generative AI lens._
 
-## Review gate
-- [ ] Each PRODUCTION use case completes a WAF review against these pillars before go-live.
+## The pillars, applied to AgentCore
 
-> This is the acceptance lens. If a design can't answer each pillar, it's not production-ready.
+### 🔒 Security
+Protect data, models, credentials, and actions across the agent execution path.
+- Least-privilege IAM per runtime/gateway; no broad admin roles.
+- Guardrails on model interactions (input + output); policy-based authorization (Cedar).
+- Secrets in a managed vault (Identity), not code/env; encryption (KMS) for sensitive data.
+- Prevent bypass of controls; isolate boundaries (namespaces, VPC where warranted).
+
+### 🛡️ Reliability
+The platform behaves predictably and degrades gracefully.
+- Deterministic policy evaluation; graceful behavior when async processes (e.g. memory
+  extraction) haven't completed.
+- Retries/fallbacks for tool calls; stateless runtimes with durable state externalized.
+- Monitor background jobs; redrive failures.
+
+### ⚙️ Operational Excellence
+Run agents like production services.
+- Everything as code (IaC); versioned components; reproducible deploys.
+- Observability + evaluation feedback loops; runbooks.
+- Deliberate rollout (monitor → enforce) for policy/guardrail changes.
+
+### 🚀 Performance Efficiency
+Right resource for the job.
+- Appropriate model + memory strategy per agent; retrieval to avoid redundant reasoning.
+- Precise, minimal policies/tool sets to keep latency low.
+- Tune retrieval (`topK`, namespaces) and thresholds.
+
+### 💰 Cost Optimization
+Spend follows value.
+- Attach only needed strategies/guardrails; model tiering; bounded retention.
+- Session/lifecycle tuning; avoid paying to store or process what isn't used.
+
+### 🌱 Sustainability
+Efficient resource use.
+- Minimal, purposeful configuration; scale-to-zero where possible; reuse over recompute;
+  block bad input early to avoid wasted cycles.
+
+## How components use this
+
+Each component `README.md` contains a **"through the 6 pillars"** section applying these
+definitions to that component (e.g. what Security means for Memory, what Cost means for
+Guardrails). This page is the reference definition; components are the application.
+
+## Acceptance lens
+A component design is "well-architected" when it can answer each pillar concretely. If it
+can't, the design is incomplete.

@@ -1,155 +1,142 @@
-# Guardrails — Defense-in-Depth for the Agentic Platform
+# Guardrails & Policy — AgentCore Component Standard
 
-> **Component:** Guardrails (first AI-PLATFORM build component)
-> **Objective:** secure the *entire* agent execution path — input, authorization, tools,
-> output, and bypass prevention — for SRE/RCA/SOC agents, following AgentCore best practices.
-> **Verified against:** AgentCore Policy Engine + Guardrails docs (see `reference/`).
-> **Principle:** *Guardrails + Authorization + IAM + Observability = Safer Agentic AI.*
+> **Component:** Guardrails / Policy Engine
+> **Scope:** independent, use-case-agnostic best-practice reference for controlling what an
+> agent can receive, access, and return on Amazon Bedrock AgentCore.
+> **Structure:** the component is described once, then evaluated through the **6
+> Well-Architected pillars**.
+> **Sources:** cited inline; verify against the AgentCore documentation before implementing.
 
-Building an agent is half the job. In production you must control **what the agent can
-receive, what it can access, and what it can return.** This document is the platform
-standard every PRODUCTION use case (RCA, SRE, Security) must implement.
+Guardrails control the full agent execution path: **input** (what reaches the model),
+**authorization** (what the agent may do), **tool access** (least privilege), **output**
+(what is returned), and **bypass prevention** (traffic can't skip the controls). In
+AgentCore these are expressed through the **Policy Engine** (Cedar policies) associated
+with a **Gateway**, plus guardrail content policies.
 
 ---
 
-## 1. Target architecture (end-to-end)
-
-**Presentation assets** (rendered PNGs in `reference/`):
-- `reference/guardrails-target-architecture.png` — full infographic-style overview (5 layers + IAM/observability)
-- `reference/guardrails-flow.png` — the end-to-end pipeline flow with bypass-prevention
-
-![Guardrails target architecture](reference/guardrails-target-architecture.png)
+## 1. Component overview
 
 ```mermaid
 flowchart LR
-    U([User / System]) --> GW[AgentCore Gateway<br/>single entry point<br/>AWS_IAM / JWT]
+    U([Caller]) --> GW[AgentCore Gateway<br/>single entry point<br/>AWS_IAM / JWT]
     GW --> PE[Policy Engine<br/>Cedar · ENFORCE<br/>authorization + guardrails]
-    PE --> IG[Input Guardrails<br/>prompt injection · jailbreak<br/>PII/secrets · toxic]
-    IG --> RT[AgentCore Runtime<br/>agent execution + reasoning]
-    RT --> TL[Tools / MCP<br/>APIs · DB · S3 · SaaS]
-    TL --> OG[Output Guardrails<br/>PII · secret-leak<br/>unsafe · suppress]
-    OG --> R([Safe Response])
+    PE --> IG[Input Guardrails<br/>prompt attack · PII · content]
+    IG --> RT[AgentCore Runtime<br/>agent execution]
+    RT --> TL[Tools / MCP<br/>via Gateway targets]
+    TL --> OG[Output Guardrails<br/>PII · secrets · content]
+    OG --> R([Response])
     U -. blocked .-x RT
-    style RT stroke:#245c8f
     linkStyle 7 stroke:#c0392b,stroke-dasharray:5 5
 ```
 
-**No gateway bypass:** users/systems must never invoke the Runtime directly. All traffic
-flows Gateway → Policy Engine → Guardrails → Runtime.
+### Core mechanics (verified facts)
 
-### How this maps to real AgentCore constructs
-
-| Layer | AgentCore construct | Verified fact |
+| Concept | Fact | Source |
 |---|---|---|
-| Single entry | **Gateway** (`AWS_IAM` or JWT authorizer) | Gateway is the front door for all agent tool calls |
-| Authorization + Guardrails | **Policy Engine** (Cedar policies), associated with the gateway | Intercepts all requests; **ENFORCE mode = default-deny**; `forbid`-overrides-`permit` |
-| Input/Output filtering | Guardrail **policies** (categories: `contentFilter`, `promptAttack`, `sensitiveInformation`) | Effects: `forbid` (block input), `permit` (allow below threshold), `suppressOutput` (block response) |
-| Tool least-privilege | Per-tool **Cedar permit policies** + least-privilege IAM on gateway role | Only explicitly permitted tool actions succeed |
-| Bypass prevention | Gateway auth + runtime resource policy | Runtime not directly invokable by end users |
+| Policy Engine | A collection of Cedar policies associated with a gateway; intercepts all requests and allows/denies each action | [Create a policy engine](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy-create-engine.html) |
+| Default deny | In ENFORCE mode, all actions are denied unless an explicit `permit` matches | [Understanding Cedar policies](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy-understanding-cedar.html) |
+| Evaluation | `forbid`-overrides-`permit`; each policy evaluated independently | [Understanding Cedar policies](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy-understanding-cedar.html) |
+| Guardrails | Content-filtering Cedar policies with categories `contentFilter`, `promptAttack`, `sensitiveInformation`; effects `forbid` / `permit` / `suppressOutput` | [Getting started with guardrails](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy-guardrails-getting-started.html) |
+| Guardrail checks IAM | Gateway execution role needs `bedrock:InvokeGuardrailChecks` | AgentCore guardrails guidance |
 
-> Key correction vs. many blog diagrams: in AgentCore the "Policy Engine" and "Guardrails"
-> are the **same Cedar-based mechanism** — guardrails are Cedar policies with content
-> categories. Authorization (which tool/action) and content filtering (safe input/output)
-> are both expressed as policies in the policy engine attached to the gateway.
+> Note: in AgentCore the "policy engine" and "guardrails" are the **same Cedar-based
+> mechanism** — guardrails are Cedar policies with content categories. Authorization
+> (which tool/action) and content filtering (safe input/output) are both policies on the
+> policy engine attached to the gateway.
 
----
-
-## 2. The five layers (platform standard)
-
-### Layer 1 — Input Protection
-Block bad input before the agent reasons on it.
-- **Detect prompt injection / jailbreak / prompt leakage** — Cedar guardrail policy,
-  category `promptAttack` (`PROMPT_INJECTION`, `JAILBREAK`, `PROMPT_LEAKAGE`), effect
-  `forbid`.
-- **Detect sensitive info in input** — category `sensitiveInformation` (PII).
-- **Block malicious instructions** — `contentFilter` (`VIOLENCE`, `HATE`, `MISCONDUCT`, …).
-- SRE/SOC note: security agents ingest attacker-controlled text (logs, alerts) — input
-  guardrails are **mandatory**, not optional.
-
-### Layer 2 — Authorization with Cedar
-Decide *what the agent is allowed to do*.
-- Per-tool `permit` policies scoped to `AgentCore::Action::"<Target>___<tool>"`.
-- Conditions on tool parameters (`context.input.*`) and identity (`principal.getTag(...)`).
-- **Default deny**: in ENFORCE mode, anything not explicitly permitted is denied.
-- Encode business rules: read telemetry = ALLOW; create ticket = ALLOW; delete resource /
-  run destructive remediation = DENY (or require elevated principal).
-
-### Layer 3 — Protect Tools & MCP (least privilege)
-Never give an agent unrestricted access to databases, APIs, S3, financial/customer data.
-- Each specialist gets only the tools its use case needs (RCA reads telemetry; it does not
-  get write access to prod).
-- Enforced at **two levels**: Cedar permit policies (per action) **and** least-privilege
-  IAM on the gateway execution role (POC gap: it had `AdministratorAccess`).
-
-### Layer 4 — Output Guardrails
-Before returning a response.
-- **PII detection / secret-leak prevention** — `sensitiveInformation` category with
-  `suppressOutput` effect on `context.output.text`.
-- **Filter unsafe content / suppress sensitive responses** — `contentFilter` +
-  `suppressOutput`.
-- SRE/SOC note: findings and logs frequently contain secrets/PII — output filtering
-  protects against leaking them into tickets, chats, or dashboards.
-
-### Layer 5 — Prevent Gateway Bypass
-- Users/systems authenticate to the **Gateway** (AWS_IAM/JWT); they cannot call the Runtime.
-- Restrict `bedrock-agentcore:InvokeAgentRuntime` on runtimes to the supervisor/gateway
-  principals via resource policy — not open to end users.
-- Consider **VPC network mode** for runtimes handling private telemetry.
+### The five control points
+1. **Input protection** — prompt injection, jailbreak, prompt leakage, sensitive-info, unsafe content (`promptAttack`, `sensitiveInformation`, `contentFilter`; effect `forbid`).
+2. **Authorization** — per-tool/per-action `permit` policies; default-deny.
+3. **Tool/MCP least privilege** — an agent gets only the tool actions it needs (Cedar + IAM).
+4. **Output guardrails** — PII/secret/unsafe-content detection with `suppressOutput`.
+5. **Bypass prevention** — callers reach the Gateway only; the Runtime is not directly invokable.
 
 ---
 
-## 3. Cross-cutting: IAM & Observability
+## 2. Guardrails through the 6 Well-Architected pillars
 
-**IAM & permissions**
-- **Least-privilege** gateway execution role. Required permission for guardrail checks:
-  `bedrock:InvokeGuardrailChecks` (plus the gateway/policy permissions).
-- Per-runtime roles scoped to their tools + memory only.
+### 🔒 Security
+- Enforce **default-deny**; write explicit `permit` policies only for required actions.
+- Apply input + output guardrails on every model interaction (`promptAttack`,
+  `sensitiveInformation`, `contentFilter`).
+- **Least-privilege** gateway execution role; grant `bedrock:InvokeGuardrailChecks` and
+  only the specific tool/target permissions needed — never broad admin.
+- Prevent gateway bypass: restrict direct `InvokeAgentRuntime` via resource policy; keep
+  the Gateway the sole entry point. Consider VPC network mode for sensitive data paths.
 
-**Observability (audit every interaction)**
-- CloudWatch (metrics/logs), CloudTrail (audit), GuardDuty (threat detection); optional
-  APM (Dynatrace/App Signals).
-- Log every policy decision (allow/deny) and guardrail block for audit + tuning.
-- Alarm on spikes in denials/blocks (possible attack or misconfiguration).
+### 🛡️ Reliability
+- Policy evaluation is deterministic (`forbid`-overrides-`permit`, default-deny) — behavior
+  is predictable under all inputs.
+- In ENFORCE mode, include a scoped **permissive baseline** policy so legitimate traffic
+  isn't accidentally denied; validate before enforcing.
+- Roll out in **monitor/log mode first**, baseline real traffic, then switch to ENFORCE.
+
+### ⚙️ Operational Excellence
+- Version all policies as code; deploy via IaC, not console.
+- Use enforcement/validation modes deliberately (`ACTIVE` vs draft; validation on-findings).
+- Log every allow/deny decision and guardrail block; review regularly and tune thresholds.
+
+### 🚀 Performance Efficiency
+- Guardrail checks add latency — scope policies precisely and avoid redundant categories.
+- Set confidence thresholds to balance protection vs. false positives.
+- Keep the policy set minimal and well-scoped so evaluation stays fast.
+
+### 💰 Cost Optimization
+- Guardrail checks and content filtering incur cost per invocation — apply where risk
+  warrants, not indiscriminately.
+- Right-size which categories run on which paths (e.g. output PII filtering where output
+  can contain PII).
+
+### 🌱 Sustainability
+- Minimal, precise policy sets reduce evaluation overhead and wasted compute.
+- Block bad input early (input guardrails) to avoid spending model/tool cycles on requests
+  that will be rejected.
 
 ---
 
-## 4. Enforcement & validation modes (know before you deploy)
+## 3. Guardrail categories & effects (reference)
 
-- **Policy engine mode:** `ENFORCE` (deny-by-default, blocks) vs. observe/log-only —
-  start in log/monitor to baseline, then switch to ENFORCE.
-- **Policy enforcement mode:** `ACTIVE` (enforced) vs. draft/monitor.
-- **Validation mode:** `FAIL_ON_ANY_FINDINGS` (safe default) vs. `IGNORE_ALL_FINDINGS`.
-- ⚠ In ENFORCE mode you **must** add a permissive policy so benign requests pass, e.g.
-  `permit (principal, action, resource is AgentCore::Gateway);` scoped appropriately —
-  otherwise everything is denied.
-
----
-
-## 5. Applying this to our platform (POC → target)
-
-| Guardrail control | POC current state | Target |
+| Category | Filters | Purpose |
 |---|---|---|
-| Bedrock/Cedar Guardrails | ❌ none configured | Input + output guardrail policies on every gateway |
-| Policy Engine (Cedar authz) | ❌ not deployed | Policy engine per gateway, ENFORCE mode, per-tool permits |
-| Tool least-privilege | ◐ gateway auth present | Per-tool Cedar permits + scoped IAM |
-| Gateway execution role | ❌ `AdministratorAccess` | Least privilege + `bedrock:InvokeGuardrailChecks` |
-| Bypass prevention | ◐ IAM/JWT on gateway | + runtime resource policy restricting InvokeAgentRuntime |
-| Observability of decisions | ◐ CloudWatch/CloudTrail present | + policy-decision logging, denial alarms, GuardDuty |
+| `contentFilter` | VIOLENCE, HATE, SEXUAL, MISCONDUCT, INSULTS | Content safety |
+| `promptAttack` | JAILBREAK, PROMPT_INJECTION, PROMPT_LEAKAGE | Prompt security |
+| `sensitiveInformation` | ADDRESS, EMAIL, PHONE, CREDIT_DEBIT_CARD_NUMBER, and [more](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-sensitive-filters.html) | PII detection |
 
-See `examples/` for ready-to-adapt Cedar policies and the gateway/guardrail config, and
-`GAP-CHECKLIST.md` for the step-by-step remediation sequence.
+| Effect | Behavior |
+|---|---|
+| `permit` | Allow requests below the threshold |
+| `forbid` | Block requests exceeding the threshold (input phase) |
+| `suppressOutput` | Block the model's response when it exceeds the threshold (output phase) |
 
-## 6. Definition of Done (per PRODUCTION use case)
-- [ ] Gateway is the only entry; runtime not directly invokable
-- [ ] Policy engine associated, ENFORCE mode, default-deny + explicit permits
-- [ ] Input guardrails: promptAttack + sensitiveInformation (+ contentFilter for SOC)
-- [ ] Output guardrails: sensitiveInformation + contentFilter with `suppressOutput`
-- [ ] Per-tool least privilege (Cedar + IAM); gateway role least-privilege
-- [ ] `bedrock:InvokeGuardrailChecks` granted; secrets via token vault
-- [ ] Policy decisions logged; denial alarms; reviewed in observability
+_Source: [Getting started with guardrails](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy-guardrails-getting-started.html)._
 
 ---
 
-_Verified against AgentCore Policy Engine + Guardrails documentation. Cedar semantics
-(default-deny, forbid-overrides-permit) and guardrail categories/effects are from the
-official docs; see `reference/REFERENCE.md` for the source infographic transcription._
+## 4. Design checklist (component acceptance)
+- [ ] Gateway is the single entry point; Runtime not directly invokable
+- [ ] Policy engine associated; ENFORCE mode with default-deny + explicit permits
+- [ ] Input guardrails: `promptAttack` + `sensitiveInformation` (+ `contentFilter` as needed)
+- [ ] Output guardrails: `sensitiveInformation` + `contentFilter` with `suppressOutput`
+- [ ] Per-tool least privilege (Cedar policies + scoped IAM)
+- [ ] Gateway role least-privilege; `bedrock:InvokeGuardrailChecks` granted
+- [ ] Policy decisions logged; alarms on denial/block spikes
+- [ ] Rolled out monitor → ENFORCE with a permissive baseline
+
+## 5. Artifacts
+- `examples/cedar-policies.md` — generic Cedar policy patterns (input/output/authz).
+- `examples/gateway-guardrail-setup.md` — end-to-end gateway + policy engine + guardrail wiring.
+- `reference/REFERENCE.md` — background reference material.
+
+---
+
+## Sources
+- [Create a policy engine](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy-create-engine.html)
+- [Understanding Cedar policies](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy-understanding-cedar.html)
+- [Getting started with guardrails](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy-guardrails-getting-started.html)
+- [Guardrails sensitive-information filters](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-sensitive-filters.html)
+- [AWS Well-Architected Framework](https://docs.aws.amazon.com/wellarchitected/latest/framework/welcome.html)
+
+_Independent AgentCore component standard. Verify all commands, policy shapes, and IAM
+against current AWS documentation before applying. Content was rephrased from AWS
+documentation for compliance._

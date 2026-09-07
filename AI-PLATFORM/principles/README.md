@@ -1,39 +1,45 @@
-# Guiding Principles
+# Design Principles
 
-Non-negotiables for the SRE/RCA/SOC agentic platform. Every PRODUCTION use case is
-reviewed against these.
+Component-agnostic principles for agentic AI on Amazon Bedrock AgentCore. They apply
+across every component and are grounded in the 6 Well-Architected pillars. Use-case-neutral
+by design.
 
-1. **Agents are least-privilege by default.** Each runtime has its own IAM role and
-   workload identity, scoped to exactly what it needs. No shared admin roles. (POC gap:
-   gateway role had `AdministratorAccess`.)
+1. **Least privilege everywhere.** Each runtime, gateway, and tool gets only the access it
+   needs — its own scoped IAM role and identity. No shared broad-admin roles. *(Security)*
 
-2. **Guardrails on every model interaction.** Input (prompt-injection, PII) and output
-   (secret-leak, unsafe content) filtering via Bedrock Guardrails — mandatory for agents
-   that touch security findings or customer telemetry. (POC gap: none configured.)
+2. **Guardrails on every model interaction.** Input and output filtering, plus
+   policy-based authorization, are default — not optional add-ons. *(Security)*
 
-3. **Memory is intentional.** Choose a memory strategy per agent: SEMANTIC for facts,
-   SUMMARIZATION for long sessions, EPISODIC+reflection for agents that must learn from
-   past incidents (RCA, triage). Never ship STM-only for a learning agent. (POC gap:
-   STM-only everywhere.)
+3. **Memory is intentional.** Choose short-term vs. long-term, and which long-term
+   strategy, based on the agent's need — never all-by-default, never STM-only for an agent
+   meant to learn. *(Performance, Cost)*
 
-4. **Observability is first-class.** The platform does SRE/SOC, so its own tracing,
-   metrics, and log retention must be exemplary (OTel → X-Ray/App Signals, bounded
-   retention, per-agent dashboards + alarms).
+4. **Single controlled entry path.** Callers reach agents through a controlled front door
+   (gateway + policy engine); direct runtime invocation is prevented. *(Security)*
 
-5. **Quality is measured, not assumed.** Agents are evaluated (LLM-as-judge + custom
-   evaluators for RCA correctness / triage accuracy). Low-scoring sessions are reviewed.
+5. **Observability is first-class.** Tracing, metrics, and structured logs are built in,
+   with bounded retention. *(Operational Excellence)*
 
-6. **Secrets live in the token vault.** All downstream credentials (Jira, SIEM, cloud
-   APIs) via AgentCore Identity credential providers — never env vars or code.
+6. **Quality is measured.** Agent behavior is evaluated, not assumed; feedback loops drive
+   improvement. *(Operational Excellence)*
 
-7. **Everything is IaC + versioned.** CDK-defined, per-agent versioned runtimes,
-   reproducible deploys. No console-only changes in production.
+7. **Secrets in a managed vault.** Outbound credentials come from the Identity token vault,
+   never from code or environment variables. *(Security)*
 
-8. **Multi-tenant isolation by design.** Namespaces, tags, and (where needed) resource
-   policies isolate tenants/actors from the start.
+8. **Everything as code, versioned.** IaC-defined, reproducible, promoted through
+   environments. No console-only production changes. *(Operational Excellence)*
 
-9. **Human-in-the-loop for consequential actions.** Remediation/ticketing that changes
-   real systems requires policy-gated approval, not autonomous execution by default.
+9. **Isolate boundaries by design.** Namespaces, tags, and resource policies separate
+   distinct entities/domains from the start. *(Security, Reliability)*
 
-10. **Well-Architected alignment.** Every design maps to the WAF pillars (see
-    `../well-architected/`).
+10. **Human-in-the-loop for consequential actions.** Actions that change real systems are
+    policy-gated, not autonomous by default. *(Security, Reliability)*
+
+11. **Design for graceful degradation.** Async processes may lag; agents remain functional
+    and fail safe. *(Reliability)*
+
+12. **Efficiency by default.** Minimal, purposeful configuration; reuse over recompute;
+    right-sized models and retention. *(Performance, Cost, Sustainability)*
+
+Each principle maps to one or more pillars (see `../well-architected/`). Components apply
+these principles concretely in their own analyses.

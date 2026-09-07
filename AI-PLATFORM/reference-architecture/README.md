@@ -1,63 +1,45 @@
-# Reference Architecture — SRE/RCA/SOC Agentic Platform
+# Reference Architecture — Generic AgentCore Composition
 
-The target architecture every PRODUCTION use case builds on. This is the "should be",
-informed by the POC and AgentCore best practices.
+How the AgentCore components compose into an agentic platform. This is a **generic,
+use-case-agnostic** target — the structural blueprint that component standards plug into.
 
-## Logical view
+## Logical composition
 
 ```mermaid
 flowchart TB
-    subgraph Edge
-      U([Operators / Systems]) --> API[API entry<br/>authN via Cognito/OIDC]
-    end
-    subgraph Orchestration
-      API --> SUP[Supervisor Agent<br/>HTTP · routing]
-    end
-    subgraph Specialists["Specialist Agents (A2A)"]
-      RCA[RCA / Investigator]
-      SRE[SRE / Ops]
-      SEC[Security / SOC]
-    end
-    SUP --> RCA & SRE & SEC
-    subgraph Tools["Tool Layer (MCP via Gateway)"]
-      CW[CloudWatch/telemetry]
-      SIEM[SIEM / Security data]
-      TICKET[Ticketing / ITSM]
-      CLOUD[Cloud control APIs]
-    end
-    RCA & SRE & SEC --> GW[AgentCore Gateway<br/>AWS_IAM / OAuth]
-    GW --> CW & SIEM & TICKET & CLOUD
-    subgraph Platform["Platform Services"]
-      MEM[(Memory<br/>semantic + episodic)]
-      ID[Identity / Token Vault]
-      GR[Bedrock Guardrails]
-      OBS[Observability<br/>X-Ray / App Signals]
-      EVAL[Evaluations]
-    end
-    RCA & SRE & SEC --> MEM
-    GW --> ID
-    SUP & RCA & SRE & SEC --> GR
-    SUP & RCA & SRE & SEC -.-> OBS
-    OBS --> EVAL
+    C([Caller]) --> ENTRY[Controlled entry<br/>Gateway + Policy Engine + Guardrails]
+    ENTRY --> RT[AgentCore Runtime<br/>agent execution]
+    RT --> TOOLS[Tools / MCP<br/>via Gateway targets]
+    RT --> MEM[(Memory<br/>short-term + long-term)]
+    TOOLS --> ID[Identity<br/>outbound credentials / token vault]
+    RT -.traces/metrics.-> OBS[Observability]
+    OBS --> EVAL[Evaluations]
+    ENTRY -. guardrails on input & output .- RT
 ```
 
-## Design tenets
+## Component roles
 
-- **Supervisor + A2A specialists + MCP tools** — the proven decomposition (kept from POC).
-- **Per-agent isolation** — role, workload identity, and memory per runtime.
-- **Guardrails and Identity are cross-cutting** — every agent inherits them.
-- **Observability + Evaluations form a closed quality loop** feeding episodic memory.
+| Component | Role in the composition |
+|---|---|
+| **Guardrails / Policy** | Controlled entry; authorization + input/output filtering; bypass prevention |
+| **Runtime** | Hosts and scales the agent(s); protocol endpoints |
+| **Gateway** | Exposes external APIs/tools as MCP tools to agents |
+| **Identity** | Inbound auth + outbound credentials from the token vault |
+| **Memory** | In-session context (STM) + cross-session knowledge (LTM strategies) |
+| **Observability** | Tracing, metrics, logs across the execution path |
+| **Evaluations** | Automated quality assessment feeding back into design |
 
-## Scalability
+## Composition tenets (generic)
+- **Controlled single entry** — all traffic passes guardrails/authorization before reaching a runtime.
+- **Per-agent isolation** — each runtime has its own role, identity, and memory.
+- **Cross-cutting services** — Guardrails, Identity, and Observability apply to every agent.
+- **Closed quality loop** — Observability feeds Evaluations, which informs design changes.
+- **Stateless compute, durable state** — runtimes scale; state lives in Memory and external stores.
 
-- Stateless agent runtimes (AgentCore-managed scaling); state in Memory + external stores.
-- Gateway aggregates tools so specialists don't hardcode integrations.
-- Namespaced memory for multi-tenant growth.
-- New use cases = new specialist(s) + tool targets, not a rebuild.
+## Scalability & composition patterns
+- Add capability by adding components/agents, not by rebuilding: a new tool = a gateway
+  target; a new agent = a runtime + identity + memory; a new control = a policy.
+- Namespaced memory and scoped policies allow growth across many boundaries/entities.
 
-## To be detailed here
-
-- [ ] Network topology (VPC mode for private telemetry; HA NAT)
-- [ ] Data flow + retention/classification per data type
-- [ ] Multi-account/landing-zone placement
-- [ ] Failure modes & fallback (per the POC error-flow, hardened)
+> This architecture is component-neutral. Each component's own standard (in its folder)
+> details how it should be built and how it satisfies the 6 pillars.

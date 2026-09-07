@@ -1,29 +1,36 @@
 # Standards & Conventions
 
-Platform-wide conventions every PRODUCTION use case follows. Keeps the platform
-consistent, discoverable, and operable as it scales.
+Platform-wide conventions for consistency across AgentCore components. Use-case-agnostic.
 
-## Naming
-- Runtimes: `{env}_{domain}_{role}` (e.g. `prod_rca_investigator`, `prod_soc_triage`).
-- Memories: `{runtime}_mem`. Gateways: `{env}-{platform}-gateway`.
-- Credential providers: `{env}-{system}-{type}` (e.g. `prod-jira-api-key`).
+## Naming (generic)
+- Runtimes: `{env}-{purpose}` (lowercase, hyphenated).
+- Memories: `{runtime}-mem`. Gateways: `{env}-{purpose}-gateway`.
+- Credential providers: `{env}-{system}-{type}`.
+- Policies: `{effect}-{concern}` (e.g. `block-prompt-attacks`, `allow-baseline`).
 
 ## Tagging (all resources)
-- `platform=agentic-sre-soc`, `env`, `domain` (rca|sre|security), `owner`, `cost-center`,
-  `data-classification`.
+- `component` (runtime|gateway|memory|identity|observability|evaluations|guardrails)
+- `env`, `owner`, `cost-center`, `data-classification`.
 
 ## Memory namespaces
-- `tenant/{tenantId}/agent/{name}/actor/{actorId}/facts`
-- `tenant/{tenantId}/agent/{name}/actor/{actorId}/episodes/{sessionId}`
-- reflections must be a sub-path of the episode namespace.
+Follow `memory/examples/namespace-conventions.md`: an outermost isolation boundary, then
+`agent/{agentName}/actor/{actorId}/{recordScope}`; reflections are a sub-path of episodes.
 
-## Deployment & versioning
-- CDK only; no console changes in prod. Per-agent immutable versions; promote via endpoints.
-- Environments: `dev` → `staging` → `prod`, separate accounts/namespaces where possible.
+## Infrastructure as code & versioning
+- IaC only; no console changes in production.
+- Version components immutably; promote across environments (`dev → staging → prod`).
+- Policies, guardrails, and memory strategies are versioned as code.
 
-## Definition of Done (per PRODUCTION use case)
-- [ ] Maps to reference-architecture
-- [ ] Satisfies principles + security baseline + WAF review
-- [ ] Memory strategy chosen; Guardrails attached; least-privilege IAM
-- [ ] Observability (dashboards/alarms) + evaluators in place
-- [ ] IaC + runbook committed
+## Documentation convention (this reference)
+- One folder per component; component described once, then a **6-pillar analysis**.
+- Generic, neutral examples only.
+- Cite sources inline; verify against current AWS docs.
+- No references to `POC/` or `PRODUCTION/`.
+
+## Component acceptance (generic Definition of Done)
+- [ ] Documented with the 6-pillar analysis
+- [ ] Least-privilege IAM defined
+- [ ] Security controls specified (guardrails/auth/encryption as applicable)
+- [ ] Observability + (where relevant) evaluation hooks defined
+- [ ] IaC + versioning approach specified
+- [ ] Sources cited

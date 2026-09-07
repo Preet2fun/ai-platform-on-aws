@@ -1,46 +1,64 @@
-# AI-PLATFORM — Best Practices & Reference Architecture
+# AI-PLATFORM — AgentCore Architecture & Best-Practice Reference
 
-The **guidance layer**. This folder codifies *how an agentic AI platform should be built*
-on Amazon Bedrock AgentCore for **SRE / RCA / SOC** use cases — the principles, reference
-architecture, per-service best practices, security baseline, and reusable blueprints that
-`PRODUCTION/` use cases must follow.
+An **independent, standalone reference** for designing agentic AI on **Amazon Bedrock
+AgentCore**. It captures architecture, design principles, and best practices — built from
+research (AWS blogs, webinars, workshops, production examples) and industry standards.
 
-It is derived from three inputs:
-1. **AgentCore + AWS best practices** (see the `agentcore-expert` skill in `.kiro/skills/`).
-2. **AWS Well-Architected** (with the Generative AI / agentic lens).
-3. **Lessons and gaps from `POC/`** — what the current deployment got right and wrong.
+## What this is (and isn't)
 
-> POC shows *what is*. This folder defines *what should be*. PRODUCTION implements it.
+- ✅ A **use-case-agnostic** standard for AgentCore architecture components.
+- ✅ Organized by **AgentCore component**, each evaluated through the **6 AWS
+  Well-Architected pillars**.
+- ✅ Built **component by component** from research, with **sources cited**.
+- ❌ **Not** dependent on, and contains **no references to**, the `POC/` or `PRODUCTION/`
+  folders.
+- ❌ **Not** tied to any specific use case. Generic, neutral examples only.
+
+> This folder is the **standard**. `POC/` is where ad-hoc learning happens and is
+> gap-analyzed *against* this standard. `PRODUCTION/` is where real use cases are built
+> *using* this standard. Neither couples back into this folder.
 
 ## Structure
 
 ```
 AI-PLATFORM/
-├── principles/            # guiding principles & non-negotiables
-├── reference-architecture/# the target platform architecture (diagrams + narrative)
-├── service-guidance/      # per-AgentCore-service best practices (SRE/SOC framed)
-│   ├── runtime.md
-│   ├── memory.md
-│   ├── identity.md
-│   ├── gateway.md
-│   ├── observability.md
-│   └── evaluations.md
-├── security/              # security baseline, IAM least-privilege, guardrails
-├── well-architected/      # WAF pillar mapping for agentic AI
-├── blueprints/            # reusable patterns (supervisor+A2A, MCP tool, memory, eval)
-└── standards/             # naming, tagging, deployment, versioning conventions
+├── README.md                  # this file
+├── well-architected/          # the 6-pillar lens applied to agentic AI on AgentCore
+├── principles/                # component-agnostic design principles
+├── reference-architecture/    # the generic target architecture (component composition)
+├── standards/                 # conventions: naming, tagging, IaC, versioning
+├── _component-template/        # the template every component folder follows
+└── <component>/               # one folder per AgentCore component (see below)
+    ├── README.md              # component described once, then the 6-pillar analysis
+    ├── examples/              # generic, neutral examples
+    └── reference/             # source/background material
 ```
 
-## How to use it
+### Components (built step by step)
 
-- Building anything in `PRODUCTION/`? Start here. Every use case must map to the
-  reference architecture and satisfy the principles + security baseline.
-- Use the **`agentcore-expert`** Kiro agent to author/extend this guidance — it reads the
-  AgentCore service docs and verifies facts before writing.
-- Treat each `service-guidance/*.md` as the authoritative "how we do X" for that service.
+| Component | Purpose | Status |
+|---|---|---|
+| **guardrails** | Policy Engine + guardrails: control input, authz, tools, output, bypass | ✅ authored |
+| **memory** | Short-term + long-term strategies (semantic, summarization, preference, episodic) | ✅ authored |
+| **runtime** | Hosting and scaling agents; protocols; lifecycle | ☐ planned |
+| **gateway** | Turning APIs/tools into MCP tools; targets; auth | ☐ planned |
+| **identity** | Inbound auth + outbound credentials (token vault) | ☐ planned |
+| **observability** | Tracing, metrics, logging for agents | ☐ planned |
+| **evaluations** | Automated agent quality assessment | ☐ planned |
 
-## Relationship to the other folders
+## How every component is documented
 
-```
-POC  ──(lessons & gaps)──►  AI-PLATFORM  ──(principles & blueprints)──►  PRODUCTION
-```
+Each component folder describes the component **once**, then analyzes it through the six
+pillars: **Security · Reliability · Operational Excellence · Performance Efficiency · Cost
+Optimization · Sustainability**. See `_component-template/` for the exact shape.
+
+## Rules for this folder
+1. Component × 6-pillar structure.
+2. Use-case-agnostic; neutral examples only (no specific business/domain framing).
+3. No references to `POC/` or `PRODUCTION/`.
+4. Cite sources (AWS docs, blogs, workshops) inline.
+5. Verify facts against current AWS documentation before writing.
+
+## Sources
+- [Amazon Bedrock AgentCore](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/what-is-bedrock-agentcore.html)
+- [AWS Well-Architected Framework](https://docs.aws.amazon.com/wellarchitected/latest/framework/welcome.html)
