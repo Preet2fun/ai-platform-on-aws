@@ -1,0 +1,13 @@
+// config.js — generated per environment during deploy/upload (do NOT hardcode secrets here;
+// these are all public client values). Replace the placeholders from CloudFormation outputs.
+window.CSHUB_CONFIG = {
+  region: "us-east-1",
+  // From 03-query-service.yaml outputs:
+  userPoolId: "REPLACE_UserPoolId",
+  userPoolClientId: "REPLACE_UserPoolClientId",
+  apiEndpoint: "REPLACE_ApiEndpoint",              // e.g. https://xxxx.execute-api.us-east-1.amazonaws.com/query
+  // Cognito Hosted UI domain (create a domain on the user pool), e.g.:
+  cognitoDomain: "REPLACE_CognitoHostedUiDomain",  // e.g. https://cshub-dev.auth.us-east-1.amazoncognito.com
+  // This UI's own URL (CloudFront domain from 04-edge-ui.yaml), used as the OAuth redirect:
+  redirectUri: "REPLACE_UiUrl"                     // e.g. https://dxxxx.cloudfront.net/
+};

@@ -40,7 +40,7 @@ AI-PLATFORM/
 |---|---|---|
 | **guardrails** | Policy Engine + guardrails: control input, authz, tools, output, bypass | ✅ authored |
 | **memory** | Short-term + long-term strategies (semantic, summarization, preference, episodic) | ✅ authored |
-| **runtime** | Hosting and scaling agents; protocols; lifecycle | ☐ planned |
+| **runtime** | Hosting/scaling agents + multi-agent collaboration patterns | ✅ authored |
 | **gateway** | Turning APIs/tools into MCP tools; targets; auth | ☐ planned |
 | **identity** | Inbound auth + outbound credentials (token vault) | ☐ planned |
 | **observability** | Tracing, metrics, logging for agents | ☐ planned |

@@ -1,0 +1,322 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Cloud Security Knowledge Hub - P1 Ingestion (offline pipeline, v1: text + PDF).
+  EventBridge (S3 upload) -> Step Functions -> Lambda steps (extract, clean, chunk,
+  embed+upsert, manifest) with a Fargate task available for heavy embedding batches.
+  Writes chunks into the Aurora pgvector + full-text schema created in P0.
+  Imports P0 exports. Lambda code is packaged/deployed via CI (S3 artifact); the
+  CodeUri/S3Key params point at those artifacts.
+
+Parameters:
+  ProjectName: { Type: String, Default: cshub }
+  EnvName: { Type: String, Default: dev, AllowedValues: [dev, prod] }
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket holding packaged Lambda zips (CI uploads here). Often the artifacts bucket.
+  ExtractKey:      { Type: String, Default: ingestion/extract.zip }
+  CleanKey:        { Type: String, Default: ingestion/clean.zip }
+  ChunkKey:        { Type: String, Default: ingestion/chunk.zip }
+  EmbedUpsertKey:  { Type: String, Default: ingestion/embed_upsert.zip }
+  ManifestKey:     { Type: String, Default: ingestion/manifest.zip }
+  EmbeddingModelId:
+    Type: String
+    Default: amazon.titan-embed-text-v2:0
+  EmbeddingDim:
+    Type: Number
+    Default: 1024
+
+Resources:
+  # ---------- Shared Lambda execution role ----------
+  IngestLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${EnvName}-ingest-lambda"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: sts:AssumeRole }
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: ingest-permissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: S3ReadWrite
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:ListBucket]
+                Resource:
+                  - !Sub
+                    - "arn:aws:s3:::${B}"
+                    - B: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-RawBucket" }
+                  - !Sub
+                    - "arn:aws:s3:::${B}/*"
+                    - B: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-RawBucket" }
+                  - !Sub
+                    - "arn:aws:s3:::${B}"
+                    - B: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-ProcessedBucket" }
+                  - !Sub
+                    - "arn:aws:s3:::${B}/*"
+                    - B: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-ProcessedBucket" }
+                  - !Sub
+                    - "arn:aws:s3:::${B}"
+                    - B: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-ArtifactsBucket" }
+                  - !Sub
+                    - "arn:aws:s3:::${B}/*"
+                    - B: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-ArtifactsBucket" }
+              - Sid: Textract
+                Effect: Allow
+                Action: [textract:DetectDocumentText, textract:StartDocumentTextDetection, textract:GetDocumentTextDetection]
+                Resource: "*"
+              - Sid: BedrockEmbed
+                Effect: Allow
+                Action: [bedrock:InvokeModel]
+                Resource: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/${EmbeddingModelId}"
+              - Sid: SecretRead
+                Effect: Allow
+                Action: [secretsmanager:GetSecretValue]
+                Resource: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-DbSecretArn" }
+              - Sid: KmsDecrypt
+                Effect: Allow
+                Action: [kms:Decrypt, kms:GenerateDataKey]
+                Resource: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-KmsKeyArn" }
+
+  # ---------- Common Lambda properties via a macro-free pattern (repeated) ----------
+  ExtractFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvName}-ingest-extract"
+      Runtime: python3.12
+      Handler: extract.handler
+      Role: !GetAtt IngestLambdaRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Code: { S3Bucket: !Ref LambdaCodeBucket, S3Key: !Ref ExtractKey }
+      VpcConfig:
+        SecurityGroupIds: [!ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-LambdaSgId" }]
+        SubnetIds: !Split [",", !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-PrivateSubnetIds" }]
+      Environment:
+        Variables:
+          RAW_BUCKET: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-RawBucket" }
+          PROCESSED_BUCKET: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-ProcessedBucket" }
+
+  CleanFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvName}-ingest-clean"
+      Runtime: python3.12
+      Handler: clean.handler
+      Role: !GetAtt IngestLambdaRole.Arn
+      Timeout: 120
+      MemorySize: 512
+      Code: { S3Bucket: !Ref LambdaCodeBucket, S3Key: !Ref CleanKey }
+      Environment:
+        Variables:
+          PROCESSED_BUCKET: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-ProcessedBucket" }
+
+  ChunkFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvName}-ingest-chunk"
+      Runtime: python3.12
+      Handler: chunk.handler
+      Role: !GetAtt IngestLambdaRole.Arn
+      Timeout: 120
+      MemorySize: 512
+      Code: { S3Bucket: !Ref LambdaCodeBucket, S3Key: !Ref ChunkKey }
+      Environment:
+        Variables:
+          PROCESSED_BUCKET: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-ProcessedBucket" }
+
+  EmbedUpsertFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvName}-ingest-embed-upsert"
+      Runtime: python3.12
+      Handler: embed_upsert.handler
+      Role: !GetAtt IngestLambdaRole.Arn
+      Timeout: 900
+      MemorySize: 1024
+      Code: { S3Bucket: !Ref LambdaCodeBucket, S3Key: !Ref EmbedUpsertKey }
+      VpcConfig:
+        SecurityGroupIds: [!ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-LambdaSgId" }]
+        SubnetIds: !Split [",", !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-PrivateSubnetIds" }]
+      Environment:
+        Variables:
+          PROCESSED_BUCKET: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-ProcessedBucket" }
+          DB_SECRET_ARN: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-DbSecretArn" }
+          DB_ENDPOINT: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-DbEndpoint" }
+          DB_NAME: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-DbName" }
+          EMBEDDING_MODEL_ID: !Ref EmbeddingModelId
+          EMBEDDING_DIM: !Ref EmbeddingDim
+
+  ManifestFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvName}-ingest-manifest"
+      Runtime: python3.12
+      Handler: manifest.handler
+      Role: !GetAtt IngestLambdaRole.Arn
+      Timeout: 120
+      MemorySize: 512
+      Code: { S3Bucket: !Ref LambdaCodeBucket, S3Key: !Ref ManifestKey }
+      VpcConfig:
+        SecurityGroupIds: [!ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-LambdaSgId" }]
+        SubnetIds: !Split [",", !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-PrivateSubnetIds" }]
+      Environment:
+        Variables:
+          ARTIFACTS_BUCKET: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-ArtifactsBucket" }
+          DB_SECRET_ARN: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-DbSecretArn" }
+          DB_ENDPOINT: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-DbEndpoint" }
+          DB_NAME: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-DbName" }
+
+  # ---------- Step Functions ----------
+  StateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${EnvName}-ingest-sfn"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: states.amazonaws.com }, Action: sts:AssumeRole }
+      Policies:
+        - PolicyName: invoke-lambdas
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [lambda:InvokeFunction]
+                Resource:
+                  - !GetAtt ExtractFn.Arn
+                  - !GetAtt CleanFn.Arn
+                  - !GetAtt ChunkFn.Arn
+                  - !GetAtt EmbedUpsertFn.Arn
+                  - !GetAtt ManifestFn.Arn
+
+  IngestStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub "${ProjectName}-${EnvName}-ingestion"
+      RoleArn: !GetAtt StateMachineRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Cloud Security Knowledge Hub ingestion (text + PDF)",
+          "StartAt": "Extract",
+          "States": {
+            "Extract":  { "Type": "Task", "Resource": "${ExtractFn.Arn}",     "Next": "Clean",
+                          "Retry": [{"ErrorEquals":["States.ALL"],"MaxAttempts":2,"IntervalSeconds":5,"BackoffRate":2}] },
+            "Clean":    { "Type": "Task", "Resource": "${CleanFn.Arn}",       "Next": "Chunk" },
+            "Chunk":    { "Type": "Task", "Resource": "${ChunkFn.Arn}",       "Next": "EmbedUpsert" },
+            "EmbedUpsert": { "Type": "Task", "Resource": "${EmbedUpsertFn.Arn}", "Next": "Manifest",
+                          "Retry": [{"ErrorEquals":["States.ALL"],"MaxAttempts":2,"IntervalSeconds":10,"BackoffRate":2}] },
+            "Manifest": { "Type": "Task", "Resource": "${ManifestFn.Arn}",    "End": true }
+          }
+        }
+
+  # ---------- EventBridge: S3 upload -> Step Functions ----------
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: events.amazonaws.com }, Action: sts:AssumeRole }
+      Policies:
+        - PolicyName: start-sfn
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - { Effect: Allow, Action: [states:StartExecution], Resource: !Ref IngestStateMachine }
+
+  S3UploadRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ProjectName}-${EnvName}-ingest-on-upload"
+      EventPattern:
+        source: [aws.s3]
+        detail-type: ["Object Created"]
+        detail:
+          bucket:
+            name: [!ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-RawBucket" }]
+      Targets:
+        - Arn: !Ref IngestStateMachine
+          Id: ingest-sfn
+          RoleArn: !GetAtt EventBridgeRole.Arn
+          InputPath: "$.detail"
+
+  # ---------- Fargate (heavy embedding batches) ----------
+  EcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${ProjectName}-${EnvName}-ingest"
+
+  FargateTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: ecs-tasks.amazonaws.com }, Action: sts:AssumeRole }
+      Policies:
+        - PolicyName: fargate-ingest
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - { Effect: Allow, Action: [bedrock:InvokeModel], Resource: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/${EmbeddingModelId}" }
+              - { Effect: Allow, Action: [s3:GetObject, s3:PutObject, s3:ListBucket], Resource: "*" }
+              - { Effect: Allow, Action: [secretsmanager:GetSecretValue], Resource: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-DbSecretArn" } }
+              - { Effect: Allow, Action: [kms:Decrypt], Resource: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-KmsKeyArn" } }
+  FargateExecRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: ecs-tasks.amazonaws.com }, Action: sts:AssumeRole }
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  IngestLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${ProjectName}-${EnvName}-ingest"
+      RetentionInDays: 30
+
+  HeavyEmbedTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${ProjectName}-${EnvName}-heavy-embed"
+      Cpu: "1024"
+      Memory: "2048"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      RuntimePlatform: { CpuArchitecture: ARM64, OperatingSystemFamily: LINUX }
+      ExecutionRoleArn: !GetAtt FargateExecRole.Arn
+      TaskRoleArn: !GetAtt FargateTaskRole.Arn
+      ContainerDefinitions:
+        - Name: heavy-embed
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectName}-${EnvName}-ingest:latest"
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref IngestLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: heavy-embed
+          Environment:
+            - { Name: DB_ENDPOINT, Value: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-DbEndpoint" } }
+            - { Name: DB_NAME, Value: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-DbName" } }
+            - { Name: DB_SECRET_ARN, Value: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-DbSecretArn" } }
+            - { Name: EMBEDDING_MODEL_ID, Value: !Ref EmbeddingModelId }
+            - { Name: EMBEDDING_DIM, Value: !Ref EmbeddingDim }
+
+Outputs:
+  StateMachineArn:
+    Value: !Ref IngestStateMachine
+    Export: { Name: !Sub "${ProjectName}-${EnvName}-IngestStateMachineArn" }
+  EcsClusterArn:
+    Value: !GetAtt EcsCluster.Arn
+    Export: { Name: !Sub "${ProjectName}-${EnvName}-IngestEcsCluster" }
+  HeavyEmbedTaskDefArn:
+    Value: !Ref HeavyEmbedTaskDef
+    Export: { Name: !Sub "${ProjectName}-${EnvName}-HeavyEmbedTaskDef" }

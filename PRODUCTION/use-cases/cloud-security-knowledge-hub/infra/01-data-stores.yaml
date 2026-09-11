@@ -1,0 +1,202 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Cloud Security Knowledge Hub - P0 Data Stores.
+  KMS CMK, S3 buckets (raw / processed / artifacts), Secrets Manager DB secret, and
+  Aurora PostgreSQL Serverless v2 (cluster + instance) in the private subnets. Imports
+  network exports from 00-network.yaml.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: cshub
+  EnvName:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+  DbName:
+    Type: String
+    Default: cshub
+  DbMasterUsername:
+    Type: String
+    Default: cshub_admin
+  MinAcu:
+    Type: Number
+    Default: 0.5
+    Description: Aurora Serverless v2 minimum capacity (budget lever - keep low).
+  MaxAcu:
+    Type: Number
+    Default: 2
+    Description: Aurora Serverless v2 maximum capacity.
+  EngineVersion:
+    Type: String
+    Default: "16.4"
+    Description: Aurora PostgreSQL engine version (must support Serverless v2 + pgvector).
+
+Resources:
+  # --- KMS CMK for encrypting S3, Secrets, Aurora ---
+  KmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub "${ProjectName}-${EnvName} CMK for data stores"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EnableRoot
+            Effect: Allow
+            Principal: { AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root" }
+            Action: "kms:*"
+            Resource: "*"
+  KmsAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/${ProjectName}-${EnvName}"
+      TargetKeyId: !Ref KmsKey
+
+  # --- S3 buckets ---
+  RawBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${ProjectName}-${EnvName}-raw-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: aws:kms, KMSMasterKeyID: !Ref KmsKey }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration: { Status: Enabled }
+      NotificationConfiguration:
+        EventBridgeConfiguration: { EventBridgeEnabled: true }
+      Tags:
+        - { Key: project, Value: !Ref ProjectName }
+        - { Key: env, Value: !Ref EnvName }
+
+  ProcessedBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${ProjectName}-${EnvName}-processed-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: aws:kms, KMSMasterKeyID: !Ref KmsKey }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - { Key: project, Value: !Ref ProjectName }
+        - { Key: env, Value: !Ref EnvName }
+
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${ProjectName}-${EnvName}-artifacts-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: aws:kms, KMSMasterKeyID: !Ref KmsKey }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - { Key: project, Value: !Ref ProjectName }
+        - { Key: env, Value: !Ref EnvName }
+
+  # --- DB credentials (auto-generated password) ---
+  DbSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${ProjectName}-${EnvName}-aurora-credentials"
+      Description: Aurora master credentials for the Knowledge Hub
+      KmsKeyId: !Ref KmsKey
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username":"${DbMasterUsername}"}'
+        GenerateStringKey: password
+        PasswordLength: 24
+        ExcludeCharacters: '"@/\ '
+
+  # --- Aurora PostgreSQL Serverless v2 ---
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub "${ProjectName}-${EnvName} Aurora private subnets"
+      SubnetIds: !Split
+        - ","
+        - !ImportValue
+          Fn::Sub: "${ProjectName}-${EnvName}-PrivateSubnetIds"
+      Tags:
+        - { Key: project, Value: !Ref ProjectName }
+
+  DbCluster:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      Engine: aurora-postgresql
+      EngineVersion: !Ref EngineVersion
+      DatabaseName: !Ref DbName
+      MasterUsername: !Sub "{{resolve:secretsmanager:${DbSecret}:SecretString:username}}"
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${DbSecret}:SecretString:password}}"
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VpcSecurityGroupIds:
+        - !ImportValue
+          Fn::Sub: "${ProjectName}-${EnvName}-AuroraSgId"
+      StorageEncrypted: true
+      KmsKeyId: !Ref KmsKey
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: !Ref MinAcu
+        MaxCapacity: !Ref MaxAcu
+      EnableCloudwatchLogsExports: [postgresql]
+      Tags:
+        - { Key: project, Value: !Ref ProjectName }
+        - { Key: env, Value: !Ref EnvName }
+
+  DbInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref DbCluster
+      DBInstanceClass: db.serverless
+      Engine: aurora-postgresql
+      PubliclyAccessible: false
+      Tags:
+        - { Key: project, Value: !Ref ProjectName }
+
+  # --- Attach the secret to the cluster for rotation support ---
+  DbSecretAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref DbSecret
+      TargetId: !Ref DbCluster
+      TargetType: AWS::RDS::DBCluster
+
+Outputs:
+  KmsKeyArn:
+    Value: !GetAtt KmsKey.Arn
+    Export: { Name: !Sub "${ProjectName}-${EnvName}-KmsKeyArn" }
+  RawBucketName:
+    Value: !Ref RawBucket
+    Export: { Name: !Sub "${ProjectName}-${EnvName}-RawBucket" }
+  ProcessedBucketName:
+    Value: !Ref ProcessedBucket
+    Export: { Name: !Sub "${ProjectName}-${EnvName}-ProcessedBucket" }
+  ArtifactsBucketName:
+    Value: !Ref ArtifactsBucket
+    Export: { Name: !Sub "${ProjectName}-${EnvName}-ArtifactsBucket" }
+  DbSecretArn:
+    Value: !Ref DbSecret
+    Export: { Name: !Sub "${ProjectName}-${EnvName}-DbSecretArn" }
+  DbClusterEndpoint:
+    Value: !GetAtt DbCluster.Endpoint.Address
+    Export: { Name: !Sub "${ProjectName}-${EnvName}-DbEndpoint" }
+  DbName:
+    Value: !Ref DbName
+    Export: { Name: !Sub "${ProjectName}-${EnvName}-DbName" }

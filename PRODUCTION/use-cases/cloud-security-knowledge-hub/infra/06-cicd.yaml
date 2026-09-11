@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Cloud Security Knowledge Hub - P0 CI/CD.
+  GitHub OIDC identity provider + a deploy role that GitHub Actions assumes (no long-lived
+  AWS keys). Trust is scoped to a specific GitHub org/repo (and optionally branch).
+
+Parameters:
+  ProjectName: { Type: String, Default: cshub }
+  EnvName: { Type: String, Default: dev, AllowedValues: [dev, prod] }
+  GitHubOrg:
+    Type: String
+    Description: GitHub organization or username that owns the repo.
+  GitHubRepo:
+    Type: String
+    Description: Repository name (e.g. cloud-security-knowledge-hub).
+  GitHubRef:
+    Type: String
+    Default: "refs/heads/main"
+    Description: Git ref allowed to assume the role (branch/tag). Use "*" to allow any.
+  CreateOidcProvider:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Set false if the GitHub OIDC provider already exists in the account.
+
+Conditions:
+  MakeOidc: !Equals [!Ref CreateOidcProvider, "true"]
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: MakeOidc
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+      ThumbprintList: [ffffffffffffffffffffffffffffffffffffffff]  # GitHub OIDC; AWS validates cert chain
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${EnvName}-gha-deploy"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - MakeOidc
+                - !Ref GitHubOidcProvider
+                - !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+              StringLike:
+                "token.actions.githubusercontent.com:sub":
+                  !Sub "repo:${GitHubOrg}/${GitHubRepo}:ref:${GitHubRef}"
+      # NOTE: broad managed policy for P0 bootstrap convenience. Tighten to a scoped
+      # least-privilege policy (only the services this stack set touches) before prod.
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/PowerUserAccess
+      Policies:
+        - PolicyName: cfn-and-iam-passrole
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:*
+                Resource: "*"
+              - Effect: Allow
+                Action: [iam:PassRole, iam:GetRole, iam:CreateRole, iam:DeleteRole,
+                         iam:AttachRolePolicy, iam:DetachRolePolicy, iam:PutRolePolicy,
+                         iam:DeleteRolePolicy, iam:TagRole]
+                Resource: "*"
+      Tags:
+        - { Key: project, Value: !Ref ProjectName }
+        - { Key: env, Value: !Ref EnvName }
+
+Outputs:
+  DeployRoleArn:
+    Value: !GetAtt DeployRole.Arn
+    Description: Set this as the role-to-assume in GitHub Actions (aws-actions/configure-aws-credentials).
+    Export: { Name: !Sub "${ProjectName}-${EnvName}-DeployRoleArn" }

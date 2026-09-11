@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Cloud Security Knowledge Hub - P5 Observability.
+  CloudWatch dashboard (query latency/errors, API 4xx/5xx, ingestion runs, Aurora ACU,
+  offline eval scores), alarms (query error rate, p95 latency, API 5xx), an SNS alert
+  topic, and a cost Budget with alerts. Imports names from earlier stacks.
+
+Parameters:
+  ProjectName: { Type: String, Default: cshub }
+  EnvName: { Type: String, Default: dev, AllowedValues: [dev, prod] }
+  AlertEmail:
+    Type: String
+    Description: Email for alarm + budget notifications.
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 300
+  P95LatencyThresholdMs:
+    Type: Number
+    Default: 6000
+  HttpApiId:
+    Type: String
+    Description: The HTTP API id from 03-query-service (for the 5xx alarm dimension).
+
+Resources:
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${ProjectName}-${EnvName}-alerts"
+  AlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # ---------- Alarms ----------
+  QueryErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-${EnvName}-query-errors"
+      AlarmDescription: Query Lambda error rate elevated
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - { Name: FunctionName, Value: !Sub "${ProjectName}-${EnvName}-query" }
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+
+  QueryLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-${EnvName}-query-p95-latency"
+      AlarmDescription: Query Lambda p95 duration high
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - { Name: FunctionName, Value: !Sub "${ProjectName}-${EnvName}-query" }
+      ExtendedStatistic: p95
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: !Ref P95LatencyThresholdMs
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+
+  Api5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-${EnvName}-api-5xx"
+      AlarmDescription: HTTP API 5xx errors elevated
+      Namespace: AWS/ApiGateway
+      MetricName: 5xx
+      Dimensions:
+        - { Name: ApiId, Value: !Ref HttpApiId }
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+
+  # ---------- Dashboard ----------
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "${ProjectName}-${EnvName}-hub"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            { "type":"metric","x":0,"y":0,"width":12,"height":6,
+              "properties":{"title":"Query Lambda - invocations & errors","region":"${AWS::Region}",
+                "metrics":[
+                  ["AWS/Lambda","Invocations","FunctionName","${ProjectName}-${EnvName}-query",{"stat":"Sum"}],
+                  ["AWS/Lambda","Errors","FunctionName","${ProjectName}-${EnvName}-query",{"stat":"Sum"}]
+                ],"period":300}},
+            { "type":"metric","x":12,"y":0,"width":12,"height":6,
+              "properties":{"title":"Query Lambda - duration (p50/p95)","region":"${AWS::Region}",
+                "metrics":[
+                  ["AWS/Lambda","Duration","FunctionName","${ProjectName}-${EnvName}-query",{"stat":"p50"}],
+                  ["AWS/Lambda","Duration","FunctionName","${ProjectName}-${EnvName}-query",{"stat":"p95"}]
+                ],"period":300}},
+            { "type":"metric","x":0,"y":6,"width":12,"height":6,
+              "properties":{"title":"Aurora Serverless v2 - capacity (ACU)","region":"${AWS::Region}",
+                "metrics":[["AWS/RDS","ServerlessDatabaseCapacity","DBClusterIdentifier","${ProjectName}-${EnvName}-data",{"stat":"Average"}]],
+                "period":300}},
+            { "type":"metric","x":12,"y":6,"width":12,"height":6,
+              "properties":{"title":"Ingestion - Step Functions executions","region":"${AWS::Region}",
+                "metrics":[
+                  ["AWS/States","ExecutionsSucceeded","StateMachineArn","arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${ProjectName}-${EnvName}-ingestion",{"stat":"Sum"}],
+                  ["AWS/States","ExecutionsFailed","StateMachineArn","arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${ProjectName}-${EnvName}-ingestion",{"stat":"Sum"}]
+                ],"period":900}},
+            { "type":"metric","x":0,"y":12,"width":12,"height":6,
+              "properties":{"title":"Offline eval scores (RAGAS)","region":"${AWS::Region}",
+                "metrics":[
+                  ["CSHub/Eval","faithfulness","Config","baseline",{"stat":"Average"}],
+                  ["CSHub/Eval","answer_relevancy","Config","baseline",{"stat":"Average"}],
+                  ["CSHub/Eval","context_precision","Config","baseline",{"stat":"Average"}],
+                  ["CSHub/Eval","context_recall","Config","baseline",{"stat":"Average"}]
+                ],"period":86400}},
+            { "type":"metric","x":12,"y":12,"width":12,"height":6,
+              "properties":{"title":"WAF - blocked requests","region":"${AWS::Region}",
+                "metrics":[["AWS/WAFV2","BlockedRequests","WebACL","${ProjectName}-${EnvName}-api-waf","Region","${AWS::Region}",{"stat":"Sum"}]],
+                "period":300}}
+          ]
+        }
+
+  # ---------- Budget ----------
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub "${ProjectName}-${EnvName}-monthly"
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: { Amount: !Ref MonthlyBudgetUsd, Unit: USD }
+        CostFilters:
+          TagKeyValue: [!Sub "user:project$${ProjectName}"]
+      NotificationsWithSubscribers:
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 50 }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80 }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100 }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+
+Outputs:
+  DashboardName:
+    Value: !Sub "${ProjectName}-${EnvName}-hub"
+  AlertTopicArn:
+    Value: !Ref AlertTopic
+    Export: { Name: !Sub "${ProjectName}-${EnvName}-AlertTopicArn" }

@@ -1,0 +1,37 @@
+<!DOCTYPE html><html><head><meta charset="UTF-8"><link rel="stylesheet" href="style.css"></head><body>
+<div class="title">Online Pipeline — Query &amp; Response (two-phase delivery)</div>
+<div class="sub">Build the simple baseline first, measure it, then add advanced stages one at a time and measure each delta</div>
+
+<div class="row" style="margin-bottom:6px;">
+  <div class="box edge">User</div><div class="arrow">→</div>
+  <div class="box edge">CloudFront</div><div class="arrow">→</div>
+  <div class="box sec">WAF</div><div class="arrow">→</div>
+  <div class="box aws">API Gateway<span class="s">+ Cognito</span></div><div class="arrow">→</div>
+  <div class="box aws">Lambda<span class="s">query service</span></div>
+</div>
+
+<div class="phase p1">
+  <h4>PHASE 1 — Baseline (simple, measurable)</h4>
+  <div class="row">
+    <div class="box sec">Input<br>Guardrails</div><div class="arrow">→</div>
+    <div class="box ai">Embed query<span class="s">Titan v2</span></div><div class="arrow">→</div>
+    <div class="box data">Dense retrieval<span class="s">pgvector top-K</span></div><div class="arrow">→</div>
+    <div class="box ai">Generate<span class="s">Claude Sonnet + citations</span></div><div class="arrow">→</div>
+    <div class="box sec">Output<br>Guardrails</div><div class="arrow">→</div>
+    <div class="box edge">Answer<span class="s">+ citations</span></div>
+  </div>
+</div>
+
+<div class="phase p2">
+  <h4>PHASE 2 — Add ONE stage at a time (feature-flagged, A/B measured vs baseline)</h4>
+  <div class="wrap">
+    <div class="box data">2.1 Hybrid + RRF<span class="s">↑ recall</span></div>
+    <div class="box ai">2.2 Cohere Rerank<span class="s">↑ precision</span></div>
+    <div class="box ai">2.3 Query transform<span class="s">multi-query·decompose·HyDE</span></div>
+    <div class="box ai">2.4 Chain-of-Note<span class="s">↑ groundedness</span></div>
+    <div class="box ai">2.5 CRAG grade<span class="s">correct·refine·fallback</span></div>
+  </div>
+</div>
+
+<div class="cross">Cross-cutting: X-Ray traces per stage · CloudWatch metrics (latency P50/P95, cost/query) · RAGAS eval on golden set</div>
+</body></html>

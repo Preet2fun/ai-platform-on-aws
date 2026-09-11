@@ -1,0 +1,19 @@
+{
+  "_comment": "Quality gate thresholds for the RAG pipeline. The CI gate fails a change if any metric drops below its floor OR regresses more than the allowed delta vs the recorded baseline. Tune once the golden set exists.",
+  "floors": {
+    "faithfulness": 0.80,
+    "answer_relevancy": 0.75,
+    "context_precision": 0.70,
+    "context_recall": 0.70
+  },
+  "max_regression": {
+    "faithfulness": 0.03,
+    "answer_relevancy": 0.05,
+    "context_precision": 0.05,
+    "context_recall": 0.05
+  },
+  "system_ceilings": {
+    "p95_latency_ms": 6000,
+    "avg_cost_usd_per_query": 0.05
+  }
+}

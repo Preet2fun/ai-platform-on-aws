@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cloud Security Knowledge Hub</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <h1>🛡️ Cloud Security Knowledge Hub</h1>
+    <div id="auth">
+      <span id="user" class="muted"></span>
+      <button id="loginBtn" hidden>Sign in</button>
+      <button id="logoutBtn" hidden>Sign out</button>
+    </div>
+  </header>
+
+  <main>
+    <p class="intro muted">
+      Ask about AWS security — how to configure a service securely, how an attack happens,
+      or how to prevent it. Answers are grounded in the knowledge base and cite their sources.
+    </p>
+
+    <div id="chat" class="chat" aria-live="polite"></div>
+
+    <form id="askForm" class="ask" autocomplete="off">
+      <input id="question" type="text" placeholder="e.g. How do I securely configure an S3 bucket?" required />
+      <button id="askBtn" type="submit">Ask</button>
+    </form>
+    <p id="hint" class="muted small"></p>
+  </main>
+
+  <!-- config.js is generated per environment (Cognito + API values). See config.js.template -->
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

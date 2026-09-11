@@ -1,0 +1,79 @@
+name: eval-gate
+
+# Quality gate for the Cloud Security Knowledge Hub RAG pipeline.
+# - Always runs the offline unit tests (ingestion, query-service, evals).
+# - On demand / main, runs the RAGAS eval against the golden set in a dev environment and
+#   fails the build if the quality gate fails (see evals/gate.py + thresholds.json).
+#
+# Auth to AWS uses the GitHub OIDC deploy role from infra/06-cicd.yaml (no long-lived keys).
+
+on:
+  pull_request:
+    paths:
+      - "PRODUCTION/use-cases/cloud-security-knowledge-hub/**"
+  workflow_dispatch:
+    inputs:
+      run_ragas:
+        description: "Run the RAGAS eval + quality gate against the golden set"
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write      # for AWS OIDC
+  contents: read
+
+defaults:
+  run:
+    working-directory: PRODUCTION/use-cases/cloud-security-knowledge-hub
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install test deps
+        run: pip install pytest
+      - name: Ingestion tests
+        run: python -m pytest ingestion/tests -q
+      - name: Query-service tests
+        run: python -m pytest query-service/tests -q
+      - name: Eval harness tests
+        run: python -m pytest evals/tests -q
+
+  ragas-gate:
+    needs: unit-tests
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_ragas }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.CSHUB_DEPLOY_ROLE_ARN }}   # from 06-cicd.yaml output
+          aws-region: us-east-1
+      - name: Install eval + service deps
+        run: |
+          pip install -r evals/requirements.txt
+          pip install -r query-service/requirements.txt
+      - name: Run RAGAS eval + quality gate
+        env:
+          # query-service env (dev): DB + Bedrock model ids, guardrail, etc.
+          DB_ENDPOINT: ${{ vars.CSHUB_DB_ENDPOINT }}
+          DB_NAME: cshub
+          DB_SECRET_ARN: ${{ vars.CSHUB_DB_SECRET_ARN }}
+          GENERATION_MODEL_ID: ${{ vars.CSHUB_GEN_MODEL_ID }}
+          EMBEDDING_MODEL_ID: amazon.titan-embed-text-v2:0
+        run: |
+          python evals/run_eval.py \
+            --golden evals/golden/golden.jsonl \
+            --config baseline \
+            --out results/baseline.json \
+            --emit-cloudwatch
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: eval-results, path: PRODUCTION/use-cases/cloud-security-knowledge-hub/results/ }

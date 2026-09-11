@@ -1,0 +1,13 @@
+{
+  "ProjectName": "cshub",
+  "EnvName": "dev",
+  "VpcCidr": "10.20.0.0/16",
+  "MinAcu": "0.5",
+  "MaxAcu": "2",
+  "EngineVersion": "16.4",
+  "EmbeddingDim": "1024",
+  "GitHubOrg": "REPLACE_ME_github_org",
+  "GitHubRepo": "cloud-security-knowledge-hub",
+  "GitHubRef": "refs/heads/main",
+  "CreateOidcProvider": "true"
+}

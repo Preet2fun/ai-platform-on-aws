@@ -1,0 +1,7 @@
+# Ingestion runtime dependencies (Lambda zips + Fargate image)
+boto3>=1.35.0
+psycopg[binary]>=3.2          # Aurora PostgreSQL driver (incl. pgvector literal upserts)
+pypdf>=5.0                    # native PDF text extraction (Textract fallback for scanned)
+
+# Dev / test only
+pytest>=8.0

@@ -1,0 +1,6 @@
+# Query service runtime dependencies (Lambda zip)
+boto3>=1.35.0
+psycopg[binary]>=3.2          # Aurora PostgreSQL driver (pgvector retrieval)
+
+# Dev / test only
+pytest>=8.0

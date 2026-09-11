@@ -1,0 +1,245 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Cloud Security Knowledge Hub - P2 Query Service (Phase 1 baseline).
+  Cognito user pool (customer auth) + HTTP API Gateway (JWT authorizer) + in-VPC query
+  Lambda + WAF. The Lambda runs the baseline online pipeline: input guardrails -> dense
+  retrieval (pgvector) -> Claude generation w/ citations -> output guardrails.
+  Imports P0 exports. Lambda code is packaged/deployed via CI (S3 artifact).
+
+Parameters:
+  ProjectName: { Type: String, Default: cshub }
+  EnvName: { Type: String, Default: dev, AllowedValues: [dev, prod] }
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket holding the packaged query Lambda zip (CI uploads here).
+  QueryKey: { Type: String, Default: query-service/query.zip }
+  EmbeddingModelId: { Type: String, Default: amazon.titan-embed-text-v2:0 }
+  GenerationModelId:
+    Type: String
+    Default: anthropic.claude-sonnet-4-5-20250929-v1:0
+    Description: Bedrock model id / inference profile for generation.
+  EmbeddingDim: { Type: Number, Default: 1024 }
+  GuardrailId:
+    Type: String
+    Default: ""
+    Description: Optional Bedrock Guardrail id. Empty = guardrails disabled (baseline still runs).
+  GuardrailVersion: { Type: String, Default: "DRAFT" }
+  TopK: { Type: Number, Default: 6 }
+
+Conditions:
+  HasGuardrail: !Not [!Equals [!Ref GuardrailId, ""]]
+
+Resources:
+  # ---------- Cognito (customer auth) ----------
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${ProjectName}-${EnvName}-users"
+      AutoVerifiedAttributes: [email]
+      UsernameAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      UserPoolTags: { project: !Ref ProjectName, env: !Ref EnvName }
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${ProjectName}-${EnvName}-web"
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows: [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      SupportedIdentityProviders: [COGNITO]
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code]
+      AllowedOAuthScopes: [openid, email, profile]
+      CallbackURLs: ["https://localhost/callback"]   # replace with the real UI domain in P4
+      LogoutURLs: ["https://localhost/logout"]
+
+  # ---------- Query Lambda ----------
+  QueryLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${EnvName}-query-lambda"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - { Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: sts:AssumeRole }
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: query-permissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: BedrockInvoke
+                Effect: Allow
+                Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+                Resource:
+                  - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/${EmbeddingModelId}"
+                  - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*"
+                  - !Sub "arn:aws:bedrock:*::foundation-model/*"
+              - Sid: BedrockGuardrail
+                Effect: Allow
+                Action: [bedrock:ApplyGuardrail]
+                Resource: !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:guardrail/*"
+              - Sid: SecretRead
+                Effect: Allow
+                Action: [secretsmanager:GetSecretValue]
+                Resource: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-DbSecretArn" }
+              - Sid: KmsDecrypt
+                Effect: Allow
+                Action: [kms:Decrypt]
+                Resource: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-KmsKeyArn" }
+
+  QueryFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvName}-query"
+      Runtime: python3.12
+      Handler: app.handler
+      Role: !GetAtt QueryLambdaRole.Arn
+      Timeout: 60
+      MemorySize: 1024
+      Code: { S3Bucket: !Ref LambdaCodeBucket, S3Key: !Ref QueryKey }
+      TracingConfig: { Mode: Active }
+      VpcConfig:
+        SecurityGroupIds: [!ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-LambdaSgId" }]
+        SubnetIds: !Split [",", !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-PrivateSubnetIds" }]
+      Environment:
+        Variables:
+          DB_SECRET_ARN: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-DbSecretArn" }
+          DB_ENDPOINT: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-DbEndpoint" }
+          DB_NAME: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-DbName" }
+          EMBEDDING_MODEL_ID: !Ref EmbeddingModelId
+          GENERATION_MODEL_ID: !Ref GenerationModelId
+          EMBEDDING_DIM: !Ref EmbeddingDim
+          TOP_K: !Ref TopK
+          GUARDRAIL_ID: !Ref GuardrailId
+          GUARDRAIL_VERSION: !Ref GuardrailVersion
+          # Phase-2 feature flags (all OFF for the baseline)
+          ENABLE_HYBRID: "false"
+          ENABLE_RERANK: "false"
+          ENABLE_QUERY_TRANSFORM: "false"
+          ENABLE_CHAIN_OF_NOTE: "false"
+          ENABLE_CRAG: "false"
+
+  QueryLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-${EnvName}-query"
+      RetentionInDays: 30
+
+  # ---------- HTTP API Gateway + JWT authorizer ----------
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "${ProjectName}-${EnvName}-api"
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: ["*"]          # tighten to the UI domain in P4
+        AllowMethods: [POST, OPTIONS]
+        AllowHeaders: [authorization, content-type]
+
+  JwtAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref HttpApi
+      AuthorizerType: JWT
+      IdentitySource: ["$request.header.Authorization"]
+      Name: cognito-jwt
+      JwtConfiguration:
+        Audience: [!Ref UserPoolClient]
+        Issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}"
+
+  QueryIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt QueryFn.Arn
+      PayloadFormatVersion: "2.0"
+
+  QueryRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "POST /query"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub "integrations/${QueryIntegration}"
+
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: "$default"
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref QueryFn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*/query"
+
+  # ---------- WAF (public endpoint protection) ----------
+  WebAcl:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub "${ProjectName}-${EnvName}-api-waf"
+      Scope: REGIONAL
+      DefaultAction: { Allow: {} }
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub "${ProjectName}-${EnvName}-waf"
+      Rules:
+        - Name: RateLimit
+          Priority: 0
+          Action: { Block: {} }
+          Statement:
+            RateBasedStatement: { Limit: 500, AggregateKeyType: IP }
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: ratelimit
+        - Name: CommonRuleSet
+          Priority: 1
+          OverrideAction: { None: {} }
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: common
+
+  WebAclAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties:
+      ResourceArn: !Sub "arn:aws:apigateway:${AWS::Region}::/apis/${HttpApi}/stages/$default"
+      WebACLArn: !GetAtt WebAcl.Arn
+
+Outputs:
+  ApiEndpoint:
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/query"
+    Export: { Name: !Sub "${ProjectName}-${EnvName}-ApiEndpoint" }
+  UserPoolId:
+    Value: !Ref UserPool
+    Export: { Name: !Sub "${ProjectName}-${EnvName}-UserPoolId" }
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+    Export: { Name: !Sub "${ProjectName}-${EnvName}-UserPoolClientId" }
+  QueryFnArn:
+    Value: !GetAtt QueryFn.Arn
+    Export: { Name: !Sub "${ProjectName}-${EnvName}-QueryFnArn" }

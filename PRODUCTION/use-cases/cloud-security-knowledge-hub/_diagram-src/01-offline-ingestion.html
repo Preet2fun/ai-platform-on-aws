@@ -1,0 +1,28 @@
+<!DOCTYPE html><html><head><meta charset="UTF-8"><link rel="stylesheet" href="style.css"></head><body>
+<div class="title">Offline Pipeline — Ingestion &amp; Indexing (v1: text + PDF)</div>
+<div class="sub">Batch · asynchronous · orchestrated by AWS Step Functions · triggered on content upload</div>
+<div class="row">
+  <div class="col"><div class="box aws">S3<span class="s">raw content<br>text · PDF</span></div></div>
+  <div class="arrow">→</div>
+  <div class="col"><div class="box aws">EventBridge<span class="s">on upload</span></div></div>
+  <div class="arrow">→</div>
+  <div class="col"><div class="box aws">Step Functions<span class="s">orchestrator</span></div></div>
+</div>
+<div class="arrow v" style="text-align:center;">↓</div>
+<div class="row">
+  <div class="col"><div class="box aws">Text extract<span class="s">parser / Textract</span></div></div>
+  <div class="arrow">→</div>
+  <div class="col"><div class="box gray">Clean &amp;<br>normalize</div></div>
+  <div class="arrow">→</div>
+  <div class="col"><div class="box gray">Chunk +<br>metadata<span class="s">service·topic·source</span></div></div>
+  <div class="arrow">→</div>
+  <div class="col"><div class="box ai">Embed<span class="s">Titan v2 (Bedrock)</span></div></div>
+</div>
+<div class="arrow v" style="text-align:center;">↓</div>
+<div class="row">
+  <div class="col"><div class="box data">Aurora Serverless v2<span class="s">pgvector (dense) + tsvector (full-text) + text + metadata</span></div></div>
+  <div class="arrow">→</div>
+  <div class="col"><div class="box gray">Ingestion eval<span class="s">coverage · manifest</span></div></div>
+</div>
+<div class="note">Compute: Lambda (light steps) · Fargate (heavy embedding batches). Multi-representation indexing added in Phase 2. Video → Amazon Transcribe branch added later.</div>
+</body></html>

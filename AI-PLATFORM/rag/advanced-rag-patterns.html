@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Advanced RAG Patterns — Comprehensive Notes</title>
+<style>
+  :root{--blue:#2f6df6;--ink:#1a1f36;--muted:#5b6478;--line:#e3e6f0;--bg:#f7f9fe;
+        --purple:#8b5cf6;--green:#10b981;--orange:#f59e0b;--teal:#0ea5a5;--red:#ef4444;}
+  *{box-sizing:border-box;}
+  body{font-family:"Segoe UI",Roboto,Arial,sans-serif;color:var(--ink);line-height:1.6;
+       max-width:980px;margin:0 auto;padding:40px 28px;background:#fff;}
+  h1{font-size:31px;color:var(--blue);margin-bottom:4px;}
+  h2{font-size:23px;margin:46px 0 10px;padding-top:16px;border-top:2px solid var(--line);}
+  h3{font-size:17px;margin:22px 0 6px;color:#243;}
+  h4{font-size:13px;margin:16px 0 4px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);}
+  p,li{font-size:14.5px;}
+  code{background:#eef1fb;padding:1px 6px;border-radius:5px;font-size:13px;color:#5b3d8a;font-family:"SF Mono",Menlo,monospace;}
+  pre{background:#0f1730;color:#dbe4ff;border-radius:10px;padding:14px 16px;overflow-x:auto;font-size:12.5px;line-height:1.5;margin:12px 0;}
+  pre code{background:none;color:inherit;padding:0;font-size:12.5px;}
+  img{max-width:100%;border:1px solid var(--line);border-radius:10px;margin:14px 0;display:block;}
+  .lead{font-size:16px;color:var(--muted);margin-bottom:8px;}
+  .toc{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:16px 22px;margin:22px 0;}
+  .toc ol{margin:6px 0 0;padding-left:22px;} .toc a{color:var(--blue);text-decoration:none;}
+  .prob{border-left:4px solid var(--red);background:#fff5f5;padding:8px 14px;border-radius:0 8px 8px 0;margin:10px 0;}
+  .metric{background:#eef7ff;border:1px solid #cfe3ff;border-radius:8px;padding:6px 12px;display:inline-block;font-size:13px;font-weight:600;color:#1c5bb8;margin:6px 0;}
+  .use{border:1px solid var(--line);border-radius:10px;padding:2px 18px 12px;margin:16px 0;background:#fcfdff;}
+  .use>h4:first-child{color:var(--blue);}
+  .obs{border-left:4px solid var(--teal);background:#e9fbfa;padding:8px 14px;border-radius:0 8px 8px 0;margin:10px 0;}
+  .sec{border-left:4px solid var(--purple);background:#f5f0ff;padding:8px 14px;border-radius:0 8px 8px 0;margin:10px 0;}
+  .obs b{color:#0a6d6d;} .sec b{color:#6b3fb8;}
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px;}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top;}
+  th{background:var(--bg);}
+  .note{font-size:13px;color:var(--muted);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:14px 0;}
+  .src{font-size:12.5px;color:var(--muted);}
+  hr{border:none;border-top:2px solid var(--line);margin:40px 0 16px;}
+  @media print{body{max-width:none;padding:0;} img,pre,.use{page-break-inside:avoid;}}
+</style>
+</head>
+<body>
+
+<h1>Advanced RAG Patterns</h1>
+<p class="lead">Comprehensive notes — building retrieval-augmented generation that holds up in production.</p>
+<p>Most RAG systems work fine in demos and fall apart in production, for a predictable reason: basic RAG has five distinct points of failure, and most teams only discover them after shipping. These notes walk through every stage where things break and how to fix each one systematically — query transformation, intelligent routing, ColBERT-style retrieval, Chain-of-Note post-processing, and agentic correction loops.</p>
+<p class="src">Part of the AI-PLATFORM reference. Technique explanations follow the source blog (see <code>reference/SOURCES.md</code>); each section adds worked <b>Observability</b> and <b>Security</b> use-case examples (included at explicit request). Diagrams in <code>images/</code>. Export to PDF: open in a browser → Print → Save as PDF.</p>
+
+<img src="images/00-basic-vs-advanced.webp" alt="Basic vs Advanced RAG pipeline">
+
+<div class="toc">
+  <b>Contents</b>
+  <ol>
+    <li><a href="#fail">Why Basic RAG Fails at Scale</a></li>
+    <li><a href="#qt">Query Transformation</a></li>
+    <li><a href="#qr">Query Routing</a></li>
+    <li><a href="#idx">Advanced Indexing (Multi-Rep + RAPTOR)</a></li>
+    <li><a href="#ret">Advanced Retrieval (DPR + ColBERT)</a></li>
+    <li><a href="#rr">Re-ranking &amp; Chain-of-Note</a></li>
+    <li><a href="#agentic">Agentic RAG: CRAG &amp; Self-RAG</a></li>
+    <li><a href="#eval">Evaluation Framework</a></li>
+    <li><a href="#blueprint">Production Architecture Blueprint</a></li>
+    <li><a href="#impl">Implementation Patterns</a></li>
+  </ol>
+</div>
+
+<!-- 1 -->
+<h2 id="fail">1 · Why Basic RAG Fails at Scale</h2>
+<p>The basic pipeline has 5 failure points:</p>
+<p class="metric">User Query → Query Embedding → Similarity Search → Retrieved Chunks → LLM Answer</p>
+<table>
+<tr><th>Stage</th><th>What goes wrong</th><th>Why it matters</th></tr>
+<tr><td>User Query</td><td>Ambiguous, poorly worded</td><td>Garbage in, garbage out</td></tr>
+<tr><td>Query Embedding</td><td>Generic model misrepresents intent</td><td>Wrong retrieval space entirely</td></tr>
+<tr><td>Similarity Search</td><td>Semantically close ≠ answer-bearing</td><td>Top-K chunks miss the point</td></tr>
+<tr><td>Retrieved Chunks</td><td>Irrelevant or missing context</td><td>LLM gets confused or hallucinates</td></tr>
+<tr><td>LLM Answer</td><td>Ignores context, uses prior knowledge</td><td>Wrong answer delivered confidently</td></tr>
+</table>
+<p>People build basic RAG and it works fine on demos. Then it hits production, user queries get weird, and retrieval starts returning chunks that are vaguely related but useless. The system looks smart but isn't.</p>
+<div class="prob"><b>Advanced RAG</b> means intercepting at every one of those stages. Each arrow in the pipeline is an opportunity to add intelligence.</div>
+<div class="use">
+  <h4>Observability example</h4>
+  <div class="obs"><b>Observability:</b> A knowledge assistant over runbooks, dashboard docs, and past incident write-ups. "elevated tail latency after the last deploy" embeds with a generic model (wrong space), similarity-searches into generic latency chunks (semantically close ≠ answer-bearing), and the LLM confidently cites an irrelevant runbook (wrong answer, delivered confidently).</div>
+  <h4>Security example</h4>
+  <div class="sec"><b>Security:</b> An assistant over threat intel, control catalogs, and prior findings. "Is CVE-relevant exposure present for service X?" needs multi-hop reasoning a single top-k lookup can't do, and returns stale advisories with no trust signal — every one of the 5 failure points is high-stakes in security.</div>
+</div>
+
+<!-- 2 -->
+<h2 id="qt">2 · Query Transformation</h2>
+<p><b>The problem:</b> users don't write good queries — they write what they're thinking, not what the vector database needs to hear. A single poorly-phrased query retrieves the wrong documents even if the answer is sitting right there in your corpus.</p>
+<img src="images/01-query-transformation.webp" alt="Query Transformation techniques">
+
+<h3>Technique 1: Multi-Query Generation</h3>
+<p>Generate N paraphrased versions of the original query, retrieve separately for each, merge all results before ranking.</p>
+<pre><code>from langchain.retrievers.multi_query import MultiQueryRetriever
+
+retriever = MultiQueryRetriever.from_llm(
+    retriever=vectorstore.as_retriever(),
+    llm=llm
+)
+docs = retriever.get_relevant_documents("What is the revenue of Company X in 2005?")</code></pre>
+<p>Typically <b>10–15% recall improvement</b> on ambiguous queries. Cost is extra LLM calls — worth it for any query where precision matters.</p>
+
+<h3>Technique 2: RAG-Fusion with Reciprocal Rank Fusion (RRF)</h3>
+<p>Generate multiple related queries, retrieve for each, then merge the ranked lists with RRF. Key insight: a document appearing consistently across multiple ranked lists is probably genuinely relevant.</p>
+<pre><code>def reciprocal_rank_fusion(results: list[list], k: int = 60) -> list:
+    scores: dict = {}
+    for ranked_list in results:
+        for rank, doc in enumerate(ranked_list):
+            doc_id = doc.page_content
+            scores[doc_id] = scores.get(doc_id, 0) + 1 / (k + rank + 1)
+    return sorted(scores.items(), key=lambda x: x[1], reverse=True)</code></pre>
+<p class="metric">score(d) = Σᵢ 1 / (k + rankᵢ(d))</p>
+<p>Expect <b>15–20% improvement</b> on queries with multiple valid angles. <code>k=60</code> is from the original paper and works well in practice.</p>
+
+<h3>Technique 3: Decomposition</h3>
+<p>Break a complex question into sequential sub-questions. Answer each, then feed those answers as context for the next.</p>
+<pre><code># Use case: "Is Berlin warmer today than in 2005?"
+# Sub-Q1: What is Berlin's current average temperature?
+# Sub-Q2: What was Berlin's average temperature in 2005?
+# Synthesis: Compare the two answers</code></pre>
+<p>The most underused technique. Analytical questions are almost never stated verbatim in your documents — a direct vector search returns general chunks, not the specific comparison. Decomposition forces retrieval of the atomic facts and reasoning over them.</p>
+
+<h3>Technique 4: HyDE (Hypothetical Document Embeddings)</h3>
+<p>Generate a hypothetical answer, embed <em>that</em>, then search for real documents similar to it. You're asking: what would a document that answers this look like?</p>
+<pre><code>from langchain.chains import HypotheticalDocumentEmbedder
+
+hyde_embeddings = HypotheticalDocumentEmbedder.from_llm(
+    llm=llm,
+    base_embeddings=embeddings,
+    custom_prompt=hyde_prompt
+)</code></pre>
+<p>Powerful for domain-specific corpora where query language differs from document language. Tradeoff: hallucinated hypotheses can steer retrieval wrong — ground your prompts tightly.</p>
+
+<h3>Technique 5: Step-Back Prompting</h3>
+<p>Before searching, abstract the query to a higher-level principle. Retrieve for that abstraction, then answer the specific question with that broader context.</p>
+<pre><code>Original:  "What happens to a gas when pressure increases at constant temperature?"
+Step-Back: "What is Boyle's Law?"
+Retrieve Boyle's Law docs → use them to answer the original question</code></pre>
+<p>Works well in scientific, legal, and technical domains where specific questions are really asking about general principles.</p>
+<div class="use">
+  <h4>Observability example</h4>
+  <div class="obs"><b>Observability:</b> "Why did checkout error rate spike at 2pm?" → <b>Decomposition</b>: (Sub-Q1) what changed near 2pm? (Sub-Q2) which dependency degraded? (Sub-Q3) matching past incidents? — then synthesize. <b>HyDE</b> bridges symptom-language ("users can't pay") to cause-language in runbooks ("payment gateway 5xx").</div>
+  <h4>Security example</h4>
+  <div class="sec"><b>Security:</b> "Are we exposed to the new auth bypass?" → <b>Step-Back</b> to "authentication bypass classes and our controls," retrieve the control docs, then answer the specific advisory. <b>Multi-Query</b> covers synonym drift ("privilege escalation" / "priv-esc" / "elevation of privilege").</div>
+</div>
+
+<!-- 3 -->
+<h2 id="qr">3 · Query Routing</h2>
+<p><b>The problem:</b> real systems have a SQL database, a vector store, maybe a graph database, APIs, and a private KB. Sending every query to every source is expensive and noisy; sending it to the wrong source gives you nothing useful.</p>
+<img src="images/02-query-routing.webp" alt="Query Routing architecture">
+
+<h3>Logical Routing via Function Calling</h3>
+<p>Give the LLM a structured schema and let it decide which store to query. Works well when data sources have clear, non-overlapping domains.</p>
+<pre><code>from pydantic import BaseModel
+
+class RouteQuery(BaseModel):
+    datasource: Literal["python_docs", "js_docs", "golang_docs"]
+
+structured_llm = llm.with_structured_output(RouteQuery)
+
+def route(question: str) -> str:
+    return structured_llm.invoke(question).datasource</code></pre>
+
+<h3>Semantic Routing</h3>
+<p>Embed descriptions of each data source and route by embedding similarity — no LLM call, just a cosine check.</p>
+<pre><code>from langchain.utils.math import cosine_similarity
+
+route_layer = {
+    "sql_db": embed("Structured data, financial records, transactions"),
+    "vector_store": embed("Semantic search over unstructured text"),
+}
+
+def semantic_route(query: str) -> str:
+    q_embed = embed(query)
+    scores = {k: cosine_similarity(q_embed, v) for k, v in route_layer.items()}
+    return max(scores, key=scores.get)</code></pre>
+
+<h3>Tool and API Routing</h3>
+<p>Data sources don't have to be static — route to live APIs where the LLM generates the parameters, the tool executes, and the output feeds back into the RAG context. This is where RAG starts blending into agentic systems (§7).</p>
+<pre><code># LLM decides: "This needs real-time data"
+# → calls weather_api(city="Berlin", date="today")
+# → response becomes part of retrieved context</code></pre>
+<div class="use">
+  <h4>Observability example</h4>
+  <div class="obs"><b>Observability:</b> "current p99 of the orders API" is a live metric → route to a metrics tool, not docs. "How do we page on-call?" → runbook index. "Explain this trace" → trace-analysis retriever. One router, three backends.</div>
+  <h4>Security example</h4>
+  <div class="sec"><b>Security:</b> "list open findings for account 123" → findings store (structured); "what's our retention policy?" → governance-docs index; "is this IP malicious?" → threat-intel API. Routing also enforces boundaries — queries only reach indexes the caller is authorized for.</div>
+</div>
+
+<!-- 4 -->
+<h2 id="idx">4 · Advanced Indexing (Multi-Rep + RAPTOR)</h2>
+<p><b>The problem:</b> standard chunking is brutal. Split a 50-page doc into 512-token chunks, embed, and hope the right chunk surfaces. Flat indices don't understand document hierarchy, and the chunk that retrieves well often isn't the chunk that answers the question completely.</p>
+<img src="images/03-indexing-raptor.webp" alt="Advanced indexing: multi-representation and RAPTOR">
+
+<h3>Multi-Representation Indexing</h3>
+<p>Index small, return large. Use LLM-generated summaries or propositions for the vector index (they embed cleanly), but store the full documents separately. Retrieval hits the summary; generation gets the full document.</p>
+<pre><code>from langchain.storage import InMemoryByteStore
+from langchain.retrievers.multi_vector import MultiVectorRetriever
+
+summaries = [llm.invoke(f"Summarize: {doc}") for doc in docs]
+
+store = InMemoryByteStore()
+retriever = MultiVectorRetriever(
+    vectorstore=vectorstore,  # searches summaries
+    byte_store=store,         # returns full docs
+    id_key="doc_id",
+)
+retriever.docstore.mset(list(zip(doc_ids, docs)))</code></pre>
+<p>Solves a real problem: dense embeddings of long documents lose specificity because they average over too much content.</p>
+
+<h3>RAPTOR</h3>
+<p>Build a tree. Leaves are raw chunks; each level above clusters the nodes and has an LLM summarize each cluster, up to a single root node capturing the whole document's essence.</p>
+<pre><code>Level 0: Raw chunks (leaves)
+Level 1: LLM summaries of chunk clusters
+Level 2: Summaries of level-1 summaries
+Root:    Global document summary</code></pre>
+<p>At query time, search all levels simultaneously — simple queries hit leaves, high-level conceptual queries hit the root, multi-hop questions find intermediate nodes. Cluster with Gaussian Mixture Models, summarize with an LLM. The paper reports <b>20%+ gains on multi-hop</b> questions (<a href="https://arxiv.org/abs/2401.18059">arxiv 2401.18059</a>).</p>
+
+<h3>Query Construction for Structured Sources</h3>
+<p>If your vector store has metadata, use it — convert natural-language conditions into structured filters before searching.</p>
+<pre><code># "What Python tutorials were published after 2023?"
+metadata_filter = {"language": "python", "publish_date": {"$gt": "2023-01-01"}}
+retriever = vectorstore.as_retriever(search_kwargs={"filter": metadata_filter})</code></pre>
+<p>A massive win on corpora with rich metadata. Construct the filter first, then search a smaller, cleaner subset.</p>
+<div class="use">
+  <h4>Observability example</h4>
+  <div class="obs"><b>Observability:</b> <b>RAPTOR</b> over a year of postmortems lets "what are our recurring reliability themes?" hit a high-level node while "what fixed the 2pm checkout outage?" hits a leaf. <b>Query construction</b> filters by <code>service</code> and <code>time-window</code> metadata so an incident query searches only the relevant, recent slice.</div>
+  <h4>Security example</h4>
+  <div class="sec"><b>Security:</b> <b>Multi-representation</b> indexes the intent of dense control clauses so semantic questions match legalistic text; <b>query construction</b> uses <code>sensitivity</code>/<code>owner</code> metadata to constrain retrieval to authorized subsets before searching — filtering, not post-filtering.</div>
+</div>
+
+<!-- 5 -->
+<h2 id="ret">5 · Advanced Retrieval: DPR &amp; ColBERT</h2>
+<p><b>The problem:</b> general-purpose embedding models capture semantic <em>similarity</em>, not answer-bearing <em>relevance</em>. A passage about "temperature measurement instruments" is similar to "thermometer history" but may be useless for answering it. One vector collapses everything and loses nuance.</p>
+<img src="images/04-retrieval-dpr-colbert.webp" alt="ColBERT late interaction vs dense retrieval">
+
+<h3>Dense Passage Retrieval (DPR)</h3>
+<p>Train separate encoders for queries and documents on actual Q&amp;A pairs. The training objective is the key difference: contrastive loss on real question-answer pairs teaches the model what "answers this question" looks like, not just what's similar.</p>
+<pre><code>query encoder:    Q → q_vec
+document encoder: D → d_vec
+score = dot(q_vec, d_vec)</code></pre>
+<p>In-batch negatives during training force the model to distinguish answer-bearing passages from merely related ones.</p>
+
+<h3>ColBERT: Late Interaction</h3>
+<p>Standard retrieval compresses a document into one vector. ColBERT keeps one vector per token and compares at the token level.</p>
+<pre><code>Query tokens:    [q1, q2, q3, q4]  → embeddings [x1, x2, x3, x4]
+Document tokens: [d1..d8]          → embeddings [y1..y8]
+
+MaxSim score = Σᵢ max_j cosine(xᵢ, yⱼ)</code></pre>
+<p>For each query token, find the most similar document token and take that score; sum across query tokens. A query like "Gross Revenue of all products of Company X in 2005" gets scored on each key term independently rather than as a blended average.</p>
+<pre><code>from ragatouille import RAGPretrainedModel
+
+RAG = RAGPretrainedModel.from_pretrained("colbert-ir/colbertv2.0")
+RAG.index(collection=docs, index_name="my_index")
+results = RAG.search(query="Gross revenue Company X 2005", k=10)</code></pre>
+<p>ColBERT achieves <b>over 2× recall improvement over BM25</b> on NaturalQuestions. Tradeoff: storage — you store token vectors per document rather than one. For most production use cases that's fine.</p>
+<div class="use">
+  <h4>Observability example</h4>
+  <div class="obs"><b>Observability:</b> Log/error messages are token-heavy and exact (<code>ECONNRESET</code>, <code>OOMKilled</code>, error codes). <b>ColBERT</b>'s MaxSim matches those exact tokens where a single dense vector blurs them, so a precise stack-trace symbol still finds the right runbook.</div>
+  <h4>Security example</h4>
+  <div class="sec"><b>Security:</b> CVE IDs, rule names, and IOC strings are exact tokens. Dense-only can miss <code>CVE-2026-1234</code> under phrasing drift; <b>ColBERT / DPR</b> trained on real Q&amp;A preserves the exact-match signal while still catching paraphrased vulnerability descriptions.</div>
+</div>
+
+<!-- 6 -->
+<h2 id="rr">6 · Re-ranking &amp; Chain-of-Note Post-processing</h2>
+<img src="images/05-reranking-chain-of-note.webp" alt="Re-ranking and Chain-of-Note">
+
+<h3>Re-ranking with Multiple Retrievers</h3>
+<p>Don't pick one retrieval method. Run BM25, dense, and ColBERT in parallel, then merge with RRF.</p>
+<pre><code>from langchain.retrievers import EnsembleRetriever
+
+ensemble = EnsembleRetriever(
+    retrievers=[bm25_retriever, dense_retriever, colbert_retriever],
+    weights=[0.3, 0.5, 0.2]
+)</code></pre>
+<p>After the ensemble merge, add a <b>cross-encoder re-ranker</b>. Cross-encoders process query and document together in one pass — far more accurate than bi-encoder similarity, but too slow across the whole corpus, so run it on the top-K candidates. <code>cross-encoder/ms-marco-MiniLM-L-6-v2</code> is a solid free option; Cohere Rerank is the easy production choice.</p>
+
+<h3>Chain-of-Note (CoN)</h3>
+<p>One of the most practical techniques here. Instead of dumping retrieved chunks into the context window, make the LLM read each chunk and write notes first.</p>
+<pre><code>CON_PROMPT = """
+Given the question: {question}
+
+Read the following passage and write concise notes:
+1. Is this passage relevant to the question?
+2. What specific facts from this passage help answer the question?
+3. What is missing?
+
+Passage: {passage}
+
+Notes:
+"""</code></pre>
+<p>Three outcomes:</p>
+<ul>
+<li><b>Fully relevant</b> — notes extract the key facts cleanly.</li>
+<li><b>Partially relevant</b> — notes acknowledge gaps; the LLM supplements from its own knowledge without hallucinating.</li>
+<li><b>Irrelevant</b> — the LLM flags it; discard it or trigger a web search.</li>
+</ul>
+<p>The hallucination reduction is real: forcing the model to explicitly evaluate each chunk before synthesizing makes it much harder to confabulate. The paper also shows it handles conflicting information across documents much better than vanilla RAG.</p>
+<div class="use">
+  <h4>Observability example</h4>
+  <div class="obs"><b>Observability:</b> Ten runbooks mention "latency"; the cross-encoder surfaces the one for <em>this</em> service's dependency, and Chain-of-Note discards a look-alike runbook for a different service — preventing a confidently wrong remediation during an incident.</div>
+  <h4>Security example</h4>
+  <div class="sec"><b>Security:</b> Chain-of-Note is a guardrail against acting on stale advisories — the note reads "this advisory is for v2, our fleet is v3" and declines rather than raising a false exposure. Re-ranking pushes the exactly-matching control clause above near-duplicates.</div>
+</div>
+
+<!-- 7 -->
+<h2 id="agentic">7 · Agentic RAG: CRAG &amp; Self-RAG</h2>
+<img src="images/06-agentic-crag-selfrag.webp" alt="Agentic RAG: CRAG and Self-RAG">
+
+<h3>CRAG: Corrective RAG</h3>
+<p>Add a retrieval evaluator — an LLM grader that scores each retrieved document and decides whether it warrants use. If documents are bad, CRAG refines the query or falls back to web search.</p>
+<pre><code>from langgraph.graph import StateGraph
+
+def grade_documents(state):
+    docs = state["documents"]; question = state["question"]
+    scored = [grader_llm.invoke({"doc": d, "question": question}) for d in docs]
+    return {
+        "documents": [d for d, s in zip(docs, scored) if s.binary_score == "yes"],
+        "web_search": any(s.binary_score == "no" for s in scored)
+    }
+
+def web_search(state):
+    if state["web_search"]:
+        state["documents"] += tavily_search.invoke(state["question"])
+    return state</code></pre>
+<p>Decision logic: <b>CORRECT</b> → proceed to generation; <b>AMBIGUOUS</b> → refine query + supplement with web search; <b>INCORRECT</b> → discard everything and do a full web search. Big deal where document staleness is a concern — your internal corpus might be six months old; CRAG falls back to fresh web content when local retrieval fails (<a href="https://arxiv.org/abs/2401.15884">arxiv 2401.15884</a>).</p>
+
+<h3>Self-RAG</h3>
+<p>Trains the LLM to insert special <b>reflection tokens</b> during generation, making it explicitly decide whether to retrieve and score its own outputs.</p>
+<table>
+<tr><th>Reflection token</th><th>Meaning</th></tr>
+<tr><td><code>[Retrieve]</code></td><td>Should I retrieve more passages?</td></tr>
+<tr><td><code>[ISREL]</code></td><td>Is this passage relevant to the query?</td></tr>
+<tr><td><code>[ISSUP]</code></td><td>Is my claim supported by the passage?</td></tr>
+<tr><td><code>[ISUSE]</code></td><td>Is this output useful overall?</td></tr>
+</table>
+<pre><code># Self-RAG generates multiple candidate segments
+# Each scored by [ISREL][ISSUP][ISUSE] tokens
+# Best-scored segment selected as output
+# Loops back to retrieve more if ISUSE = "no"</code></pre>
+<p><b>When to choose:</b> Self-RAG for per-sentence grounding in long-form generation (finer control). CRAG for most production pipelines wanting a corrective mechanism without training a custom model (simpler, more practical).</p>
+<div class="use">
+  <h4>Observability example</h4>
+  <div class="obs"><b>Observability:</b> During triage, <b>CRAG</b> grades retrieved runbooks; if none match the current alarm signature it doesn't hallucinate a fix — it triggers a fallback search (recent changes, similar traces). <b>Self-RAG</b> skips retrieval for a trivial "what does p99 mean?" and retrieves only for environment-specific questions.</div>
+  <h4>Security example</h4>
+  <div class="sec"><b>Security:</b> For "is this alert a true positive?", <b>CRAG</b> discards low-confidence intel and re-queries authoritative sources before asserting; <b>Self-RAG</b>'s <code>[ISSUP]</code> means the assistant won't claim an exposure unless retrieved evidence backs it — critical when a false claim triggers real response actions. Pair with human-in-the-loop for consequential actions.</div>
+</div>
+
+<!-- 8 -->
+<h2 id="eval">8 · RAG Evaluation Framework</h2>
+<img src="images/07-evaluation-framework.webp" alt="RAG evaluation framework">
+
+<h3>The RAG Triad (TruLens)</h3>
+<p>Most teams measure end-to-end accuracy and miss where the system is actually failing. The RAG Triad isolates three independent failure modes:</p>
+<table>
+<tr><th>Metric</th><th>What it measures</th><th>Failure it catches</th></tr>
+<tr><td>Context Relevance</td><td>Is retrieved context relevant to the query?</td><td>Retrieval noise</td></tr>
+<tr><td>Groundedness</td><td>Is the answer grounded in the context?</td><td>Hallucination</td></tr>
+<tr><td>Answer Relevance</td><td>Does the answer address the query?</td><td>Off-topic generation</td></tr>
+</table>
+<p>You can have perfect retrieval and still hallucinate; you can be grounded and still be off-topic. Measuring them separately tells you exactly where to focus.</p>
+
+<h3>RAGAS: Automated Pipeline Evaluation</h3>
+<pre><code>from ragas import evaluate
+from ragas.metrics import (faithfulness, answer_relevancy,
+                           context_precision, context_recall)
+from datasets import Dataset
+
+result = evaluate(
+    Dataset.from_dict({
+        "question": questions, "answer": answers,
+        "contexts": contexts, "ground_truth": ground_truths,
+    }),
+    metrics=[faithfulness, answer_relevancy, context_precision, context_recall],
+)</code></pre>
+<p>Run this on a representative test set <b>before and after each change</b>. RAGAS tells you whether a retrieval optimization actually improved generation quality or just looked better in isolation.</p>
+
+<h3>What to Track in Production</h3>
+<pre><code>Retrieval:   Hit Rate@K · MRR · NDCG · Context Precision / Recall
+Generation:  Faithfulness · Answer Relevancy · Hallucination Rate
+System:      Latency P50/P95 · Cost-per-query · Throughput</code></pre>
+
+<h3>LLM-as-Judge</h3>
+<p>When you don't have ground-truth labels, use a stronger LLM to score outputs (faithfulness 1–5, relevance 1–5, with reasoning as JSON). Not perfect, but surprisingly good for catching obvious failures and cheap to run across large test sets.</p>
+<div class="use">
+  <h4>Observability example</h4>
+  <div class="obs"><b>Observability:</b> Curate past incidents with known root causes; measure whether the assistant retrieves the correct postmortem (context recall) and proposes the correct remediation (correctness), tracking time-to-answer as a system metric. Regression-gate every index/prompt change so retrieval quality can't silently degrade.</div>
+  <h4>Security example</h4>
+  <div class="sec"><b>Security:</b> Groundedness is the headline metric — a security answer must be grounded in retrieved evidence, never invented. Track false-positive/negative rates on a labeled findings set; a drop in groundedness is a release blocker because an ungrounded claim can trigger unwarranted response actions.</div>
+</div>
+
+<!-- 9 -->
+<h2 id="blueprint">9 · Production Architecture Blueprint</h2>
+<pre><code>┌─────────────────────────────────────────────────────────────────────┐
+│                      ADVANCED RAG SYSTEM                             │
+│                                                                     │
+│  INGESTION                    RETRIEVAL              GENERATION      │
+│  Raw Docs                     Multi-Query            Re-rank (RRF)   │
+│    ↓                          Routing                Chain-of-Note   │
+│  Chunking                     ┌─────────┐            LLM Answer      │
+│    ↓                          │ Dense   │                           │
+│  Multi-Rep Index              │ BM25    │  →  Merge                  │
+│  (Summary + Full)             │ ColBERT │     Fuse                   │
+│    ↓                          └─────────┘     Re-rank                │
+│  RAPTOR Tree                                                        │
+│    ↓                          AGENTIC LAYER                          │
+│  Vector DB                    CRAG evaluator                        │
+│  + DocStore                   Self-RAG loop                         │
+│                               Web fallback                          │
+│                                                                     │
+│  EVALUATION: RAGAS · TruLens · LLM-as-Judge · Latency tracking      │
+└─────────────────────────────────────────────────────────────────────┘</code></pre>
+
+<h3>Technology Stack</h3>
+<table>
+<tr><th>Layer</th><th>Options</th><th>Recommended</th></tr>
+<tr><td>Vector DB</td><td>Chroma, FAISS, Pinecone, Weaviate</td><td>Pinecone or Weaviate for production</td></tr>
+<tr><td>Embedding</td><td>OpenAI, Mistral, Cohere, BGE</td><td>BGE-M3 or Mistral Embed for cost</td></tr>
+<tr><td>Retrieval</td><td>Dense, BM25, ColBERT via RAGatouille</td><td>Ensemble for best recall</td></tr>
+<tr><td>Re-ranker</td><td>Cross-encoder, Cohere Rerank</td><td>Cohere Rerank for simplicity</td></tr>
+<tr><td>Orchestration</td><td>LangChain, LlamaIndex, LangGraph</td><td>LangGraph for anything agentic</td></tr>
+<tr><td>Evaluation</td><td>RAGAS, TruLens, DeepEval</td><td>RAGAS for automation</td></tr>
+</table>
+<div class="note"><b>Mapping to AgentCore / this platform:</b> orchestration → AgentCore Runtime; agentic layer → the runtime multi-agent patterns; evaluation → the Evaluations component; input/output filtering + access-scoped retrieval → the Guardrails component; shared context → the Memory component.</div>
+<div class="use">
+  <h4>Observability example</h4>
+  <div class="obs"><b>Observability:</b> A read-only assistant — router sends live-metric questions to tools and doc questions through the full retrieve→re-rank→CRAG pipeline; every stage emits a trace span so latency is attributable to retrieval, re-ranking, or generation, and retrieval quality is evaluated continuously.</div>
+  <h4>Security example</h4>
+  <div class="sec"><b>Security:</b> Access control is first-class — retrieval is scoped to the indexes/namespaces the requesting identity may see (no cross-tenant/over-privileged data). Output filtering suppresses secrets/PII; consequential actions stay behind human approval.</div>
+</div>
+
+<!-- 10 -->
+<h2 id="impl">10 · Implementation Patterns</h2>
+
+<h3>Pattern 1: Full Advanced RAG Chain (LangChain)</h3>
+<pre><code>from langchain.retrievers.multi_query import MultiQueryRetriever
+from langchain.retrievers import EnsembleRetriever, BM25Retriever
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
+
+multi_query = MultiQueryRetriever.from_llm(retriever=dense.as_retriever(), llm=llm)
+ensemble = EnsembleRetriever(retrievers=[bm25, multi_query], weights=[0.4, 0.6])
+
+con_prompt = ChatPromptTemplate.from_template("""
+Write reading notes for the context, then answer the question.
+Context: {context}
+Question: {question}
+Notes:
+Answer:
+""")
+
+chain = (
+    {"context": ensemble | format_docs, "question": RunnablePassthrough()}
+    | con_prompt | llm | StrOutputParser()
+)</code></pre>
+
+<h3>Pattern 2: CRAG with LangGraph</h3>
+<pre><code>from langgraph.graph import END, StateGraph
+
+workflow = StateGraph(GraphState)
+workflow.add_node("retrieve", retrieve)
+workflow.add_node("grade_documents", grade_documents)
+workflow.add_node("generate", generate)
+workflow.add_node("web_search_node", web_search)
+
+workflow.set_entry_point("retrieve")
+workflow.add_edge("retrieve", "grade_documents")
+workflow.add_conditional_edges(
+    "grade_documents", decide_to_generate,
+    {"web_search": "web_search_node", "generate": "generate"},
+)
+workflow.add_edge("web_search_node", "generate")
+workflow.add_edge("generate", END)
+app = workflow.compile()</code></pre>
+
+<h3>Pattern 3: ColBERT with RAGatouille</h3>
+<pre><code>from ragatouille import RAGPretrainedModel
+
+RAG = RAGPretrainedModel.from_pretrained("colbert-ir/colbertv2.0")
+RAG.index(
+    collection=[doc.page_content for doc in docs],
+    document_ids=[str(i) for i in range(len(docs))],
+    index_name="production_index",
+    max_document_length=256,
+    split_documents=True,
+)
+results = RAG.search(query="What is the gross revenue of Company X in 2005?", k=10)</code></pre>
+
+<h3>Decision Tree: Where to Start</h3>
+<pre><code>Is the query simple and well-formed?
+├── YES → Standard dense retrieval may suffice
+└── NO  → Apply Query Transformation first
+         ├── Ambiguous → Multi-Query + RAG-Fusion
+         ├── Complex multi-step → Decomposition
+         └── Domain mismatch → HyDE / Step-Back
+
+Do you have multiple data sources?
+└── YES → Add Query Routing (Logical + Semantic)
+
+Is recall still poor?
+└── YES → Upgrade retrieval: DPR → ColBERT → Ensemble + RRF
+
+Are hallucinations still occurring?
+└── YES → Add Chain-of-Note post-processing
+
+Is retrieved context unreliable?
+└── YES → Add CRAG evaluator + web fallback
+
+Need per-sentence grounding?
+└── YES → Self-RAG with reflection tokens
+
+Are you measuring quality?
+└── Use RAGAS + TruLens RAG Triad continuously</code></pre>
+
+<h3>Conclusion</h3>
+<p>Advanced RAG isn't one technique — it's a layered set of interventions, each targeting a specific failure mode. You don't have to implement everything at once. Start with query transformation (biggest bang for least effort), then layer in better retrieval (ensemble + ColBERT), then Chain-of-Note to cut hallucinations, and only add CRAG or Self-RAG once retrieval itself is solid. Evaluate at every step with RAGAS so you actually know what's improving. The teams that build reliable RAG treat each stage as an independent engineering problem rather than hoping the LLM compensates for poor retrieval. It won't.</p>
+
+<hr>
+<h3>References</h3>
+<table>
+<tr><th>Resource</th><th>Link</th></tr>
+<tr><td>RAPTOR Paper</td><td><a href="https://arxiv.org/pdf/2401.18059.pdf">arxiv.org/pdf/2401.18059.pdf</a></td></tr>
+<tr><td>CRAG Paper</td><td><a href="https://arxiv.org/abs/2401.15884">arxiv.org/abs/2401.15884</a></td></tr>
+<tr><td>ColBERT Paper</td><td><a href="https://arxiv.org/pdf/2004.12832.pdf">arxiv.org/pdf/2004.12832.pdf</a></td></tr>
+<tr><td>RAGAS</td><td><a href="https://github.com/explodinggradients/ragas">github.com/explodinggradients/ragas</a></td></tr>
+<tr><td>RAGatouille (ColBERT)</td><td><a href="https://github.com/bclavie/RAGatouille">github.com/bclavie/RAGatouille</a></td></tr>
+<tr><td>LangGraph CRAG</td><td><a href="https://github.com/langchain-ai/langgraph/blob/main/examples/rag/langgraph_crag.ipynb">langgraph CRAG example</a></td></tr>
+</table>
+<p class="src">Source blog: "Advanced RAG patterns" (AWS Builder Center) — full text and diagrams provided by the user. Notes follow the blog's structure and content; diagrams reproduced to match the originals. Observability &amp; Security example callouts added at explicit request. See <code>reference/SOURCES.md</code>.</p>
+
+</body>
+</html>
