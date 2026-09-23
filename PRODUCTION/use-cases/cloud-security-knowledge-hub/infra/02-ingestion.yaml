@@ -80,6 +80,13 @@ Resources:
                 Effect: Allow
                 Action: [kms:Decrypt, kms:GenerateDataKey]
                 Resource: !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-KmsKeyArn" }
+              - Sid: IngestionQualityMetrics
+                Effect: Allow
+                Action: [cloudwatch:PutMetricData]
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    "cloudwatch:namespace": "CSHub/Ingestion"
 
   # ---------- Common Lambda properties via a macro-free pattern (repeated) ----------
   ExtractFn:

@@ -16,14 +16,23 @@ Parameters:
   EmbeddingModelId: { Type: String, Default: amazon.titan-embed-text-v2:0 }
   GenerationModelId:
     Type: String
-    Default: anthropic.claude-sonnet-4-5-20250929-v1:0
-    Description: Bedrock model id / inference profile for generation.
+    Default: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+    Description: >
+      Bedrock inference-profile id for generation. Claude Sonnet 4.5 is NOT available for
+      on-demand invoke via the bare foundation-model id — it requires an inference profile
+      (the "us." cross-region prefix), so this default is a profile id, not a model id.
   EmbeddingDim: { Type: Number, Default: 1024 }
   GuardrailId:
     Type: String
     Default: ""
     Description: Optional Bedrock Guardrail id. Empty = guardrails disabled (baseline still runs).
-  GuardrailVersion: { Type: String, Default: "DRAFT" }
+  GuardrailVersion:
+    Type: String
+    Default: "2"
+    Description: >
+      Guardrail version. v2 is tuned for security education: MISCONDUCT/VIOLENCE input
+      filters set to NONE (v1 false-blocked legitimate "how does X attack work" questions),
+      while keeping PROMPT_ATTACK on input and AWS-key/password PII block on output.
   TopK: { Type: Number, Default: 6 }
 
 Conditions:
@@ -191,44 +200,12 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*/query"
 
-  # ---------- WAF (public endpoint protection) ----------
-  WebAcl:
-    Type: AWS::WAFv2::WebACL
-    Properties:
-      Name: !Sub "${ProjectName}-${EnvName}-api-waf"
-      Scope: REGIONAL
-      DefaultAction: { Allow: {} }
-      VisibilityConfig:
-        SampledRequestsEnabled: true
-        CloudWatchMetricsEnabled: true
-        MetricName: !Sub "${ProjectName}-${EnvName}-waf"
-      Rules:
-        - Name: RateLimit
-          Priority: 0
-          Action: { Block: {} }
-          Statement:
-            RateBasedStatement: { Limit: 500, AggregateKeyType: IP }
-          VisibilityConfig:
-            SampledRequestsEnabled: true
-            CloudWatchMetricsEnabled: true
-            MetricName: ratelimit
-        - Name: CommonRuleSet
-          Priority: 1
-          OverrideAction: { None: {} }
-          Statement:
-            ManagedRuleGroupStatement:
-              VendorName: AWS
-              Name: AWSManagedRulesCommonRuleSet
-          VisibilityConfig:
-            SampledRequestsEnabled: true
-            CloudWatchMetricsEnabled: true
-            MetricName: common
-
-  WebAclAssociation:
-    Type: AWS::WAFv2::WebACLAssociation
-    Properties:
-      ResourceArn: !Sub "arn:aws:apigateway:${AWS::Region}::/apis/${HttpApi}/stages/$default"
-      WebACLArn: !GetAtt WebAcl.Arn
+  # ---------- Abuse protection ----------
+  # NOTE: AWS WAF cannot be associated with an API Gateway *HTTP API* (v2) — WAF supports
+  # REST APIs (v1), ALBs, AppSync, Cognito and CloudFront only. For this baseline the HTTP API
+  # is rate-limited by the stage throttling above (burst 20 / rate 10). Edge-level WAF is added
+  # on the CloudFront distribution (04-edge-ui.yaml / P5) which fronts all user traffic.
+  # A regional WebACL here would be unattachable, so it is intentionally omitted.
 
 Outputs:
   ApiEndpoint:

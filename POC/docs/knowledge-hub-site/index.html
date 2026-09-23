@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Motadata MSP AI Assistant — POC Knowledge Hub</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#111722; --panel2:#161d29; --border:#243043;
+    --text:#d7e0ee; --muted:#8b97a8; --accent:#4f8cff; --accent2:#7b61ff;
+    --green:#2ec16b; --amber:#f0b429; --red:#e5484d; --code:#0b1017;
+    --t1:#4f8cff; --t2:#7b61ff; --pill:#1c2636;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:15px;line-height:1.65;}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  /* Layout */
+  .wrap{display:flex;min-height:100vh}
+  nav.side{width:290px;flex:0 0 290px;background:var(--panel);border-right:1px solid var(--border);
+    position:sticky;top:0;height:100vh;overflow-y:auto;padding:0 0 40px}
+  main{flex:1;min-width:0;padding:0 48px 120px;max-width:1080px}
+
+  /* Sidebar */
+  .brand{padding:22px 20px 16px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--panel);z-index:2}
+  .brand h1{font-size:16px;margin:0 0 3px;letter-spacing:.2px}
+  .brand .sub{font-size:12px;color:var(--muted)}
+  .brand .env{display:inline-block;margin-top:8px;font-size:11px;color:var(--muted);
+    background:var(--pill);border:1px solid var(--border);border-radius:20px;padding:2px 10px}
+  .nav-group{padding:14px 12px 4px;font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)}
+  nav.side a.item{display:block;padding:8px 20px;color:var(--text);font-size:13.5px;border-left:3px solid transparent}
+  nav.side a.item:hover{background:var(--panel2);text-decoration:none}
+  nav.side a.item.active{border-left-color:var(--accent);background:var(--panel2);color:#fff}
+  nav.side a.item.t1.active{border-left-color:var(--t1)}
+  nav.side a.item.t2.active{border-left-color:var(--t2)}
+
+  /* Content */
+  section{padding-top:34px;margin-top:-14px}
+  h2.sec{font-size:26px;margin:8px 0 4px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+  h3{font-size:19px;margin:30px 0 8px;color:#eaf1fb}
+  h4{font-size:15.5px;margin:20px 0 6px;color:#cdd8e8}
+  p{margin:10px 0}
+  .lead{font-size:16px;color:#c3cede}
+  ul,ol{margin:10px 0;padding-left:22px}
+  li{margin:5px 0}
+  code{background:var(--code);border:1px solid var(--border);border-radius:5px;
+    padding:1px 6px;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12.5px;color:#9fd0ff}
+  pre{background:var(--code);border:1px solid var(--border);border-radius:10px;
+    padding:16px;overflow-x:auto;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12.5px;line-height:1.55}
+  pre code{background:none;border:none;padding:0;color:#c7d3e3}
+
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin:16px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:900px){.grid2{grid-template-columns:1fr}}
+
+  table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13.5px}
+  th,td{border:1px solid var(--border);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#e7eef8;font-weight:600}
+  tr:nth-child(even) td{background:rgba(255,255,255,.015)}
+
+  .fig{margin:20px 0;background:#fff;border:1px solid var(--border);border-radius:10px;padding:10px;text-align:center}
+  .fig img{max-width:100%;height:auto;border-radius:6px}
+  .fig figcaption{color:var(--muted);font-size:12.5px;margin-top:8px;padding-bottom:4px}
+
+  .pill{display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:20px;border:1px solid var(--border);background:var(--pill);color:var(--muted);margin-right:4px}
+  .pill.http{color:#9fd0ff}.pill.a2a{color:#c7b3ff}.pill.mcp{color:#8ce0b0}
+  .tag-high{color:var(--red);font-weight:600}.tag-med{color:var(--amber);font-weight:600}.tag-low{color:var(--muted)}
+
+  .callout{border-left:4px solid var(--accent);background:var(--panel2);border-radius:0 10px 10px 0;padding:12px 16px;margin:16px 0}
+  .callout.warn{border-left-color:var(--amber)}
+  .callout.danger{border-left-color:var(--red)}
+  .callout.ok{border-left-color:var(--green)}
+  .callout .t{font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px}
+  .callout.warn .t{color:var(--amber)}.callout.danger .t{color:var(--red)}.callout.ok .t{color:var(--green)}.callout .t{color:var(--accent)}
+
+  /* Tenant banner */
+  .tenant-banner{border-radius:12px;padding:16px 20px;margin:6px 0 18px;border:1px solid var(--border)}
+  .tenant-banner.t1{background:linear-gradient(90deg,rgba(79,140,255,.14),transparent);border-color:rgba(79,140,255,.4)}
+  .tenant-banner.t2{background:linear-gradient(90deg,rgba(123,97,255,.14),transparent);border-color:rgba(123,97,255,.4)}
+  .tenant-banner h3{margin:0 0 2px;border:none}
+  .tenant-banner .meta{font-size:13px;color:var(--muted)}
+
+  /* Step flow */
+  .step{display:flex;gap:14px;margin:0;padding:14px 0;border-bottom:1px dashed var(--border)}
+  .step:last-child{border-bottom:none}
+  .step .n{flex:0 0 34px;height:34px;border-radius:50%;background:var(--pill);border:1px solid var(--border);
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#fff}
+  .step.t1 .n{background:rgba(79,140,255,.2);border-color:var(--t1);color:#bcd6ff}
+  .step.t2 .n{background:rgba(123,97,255,.2);border-color:var(--t2);color:#d3c6ff}
+  .step .body{flex:1;min-width:0}
+  .step .body .h{font-weight:600;color:#eaf1fb}
+  .step .body .where{font-size:12px;color:var(--muted);margin-left:6px}
+
+  .toc-top{color:var(--muted);font-size:12px;margin-top:6px}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0}
+  .kbd{font-family:monospace;background:var(--pill);border:1px solid var(--border);border-radius:4px;padding:0 5px;font-size:12px}
+  .muted{color:var(--muted)}
+  .mono{font-family:"SF Mono",Menlo,Consolas,monospace}
+  .center{text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<!-- ============ SIDEBAR ============ -->
+<nav class="side" id="side">
+  <div class="brand">
+    <h1>Motadata MSP AI Assistant</h1>
+    <div class="sub">Agentic RCA on Amazon Bedrock AgentCore</div>
+    <div class="env">POC · acct 001961766007 · us-east-1</div>
+  </div>
+
+  <div class="nav-group">Overview</div>
+  <a class="item" href="#about">1. What this POC is about</a>
+  <a class="item" href="#prereq">2. Prerequisites &amp; AWS services</a>
+  <a class="item" href="#architecture">3. Detailed architecture</a>
+  <a class="item" href="#flow">4. End-to-end request flow</a>
+  <a class="item" href="#agentcore">5. AgentCore components</a>
+  <a class="item" href="#memory">6. Memory &amp; ReAct internals</a>
+  <a class="item" href="#tenancy">7. Multi-tenancy model</a>
+
+  <div class="nav-group">Tenant journeys</div>
+  <a class="item t1" href="#tenant1">8. Tenant 1 — RCA: slowness</a>
+  <a class="item t2" href="#tenant2">9. Tenant 2 — RCA: error-rate</a>
+  <a class="item" href="#compare">10. Side-by-side comparison</a>
+
+  <div class="nav-group">Reference</div>
+  <a class="item" href="#observability">11. Observability</a>
+  <a class="item" href="#gaps">12. Findings &amp; gaps</a>
+</nav>
+
+<!-- ============ MAIN ============ -->
+<main>
+
+<!-- ========================================================= -->
+<section id="about">
+  <h2 class="sec">1. What this POC is about</h2>
+  <p class="lead">A supervisor-orchestrated, multi-agent AI assistant for MSP / SRE operations, built on
+  <strong>Amazon Bedrock AgentCore</strong>. A tenant operator asks a plain-English question
+  ("is there any issue in my env?", "why is checkout slow?") and the system investigates that
+  tenant's telemetry, validates against live AWS, and returns a grounded root-cause analysis.</p>
+
+  <div class="card">
+    <h4 style="margin-top:4px">The one-sentence mental model</h4>
+    <p style="margin-bottom:4px">A <strong>Supervisor agent</strong> reads the question, decides which
+    <strong>specialist agents</strong> to call (RCA investigator, CloudWatch, security, cost, Jira, knowledge, advisor),
+    each specialist runs a <strong>ReAct loop</strong> calling <strong>tools</strong> (SQL over the tenant telemetry DB,
+    live AWS reads via MCP), and the supervisor synthesizes the answers — all scoped to the
+    <strong>one tenant the operator selected in the UI</strong>.</p>
+  </div>
+
+  <h3>Who does what</h3>
+  <table>
+    <tr><th>Layer</th><th>Responsibility</th><th>Deployed as</th></tr>
+    <tr><td>SPA (chat UI)</td><td>Login, tenant switch, ask questions, render streamed answers</td><td>S3 + CloudFront (<span class="mono">d2e9bh1pq1a0sj.cloudfront.net</span>)</td></tr>
+    <tr><td>Backend API</td><td>Auth, tenant credential switch, persist requests, invoke supervisor, stream results</td><td>ECS Fargate behind ALB (FastAPI :8000)</td></tr>
+    <tr><td>Supervisor</td><td>Intent understanding + routing (LangGraph ReAct, 7 delegation tools)</td><td>AgentCore Runtime <span class="pill http">HTTP</span></td></tr>
+    <tr><td>Specialists</td><td>Do the actual work (RCA, metrics, security, cost, tickets, docs)</td><td>AgentCore Runtimes <span class="pill a2a">A2A</span></td></tr>
+    <tr><td>Tools</td><td>SQL on telemetry DB; live AWS reads; Jira</td><td>SQL toolkit + AgentCore Gateway / MCP runtimes <span class="pill mcp">MCP</span></td></tr>
+  </table>
+
+  <div class="callout">
+    <div class="t">Scope note</div>
+    Everything here documents the <strong>deployed POC</strong> (developer repo <code>POC/agentcore-poc-dev</code> +
+    live discovery of account <code>001961766007</code>). The two tenant journeys are realistic reconstructions grounded
+    in the actual agent code — where a payload or query is illustrative it is labelled as such.
+  </div>
+</section>
+
+<!-- ========================================================= -->
+<section id="prereq">
+  <h2 class="sec">2. Prerequisites &amp; AWS services</h2>
+  <p>To stand up and run this POC you need the following AWS services wired together. They are grouped by role.</p>
+
+  <h3>Core AI / agent platform</h3>
+  <table>
+    <tr><th>Service</th><th>Why it is needed</th></tr>
+    <tr><td><strong>Amazon Bedrock</strong></td><td>The LLMs. Supervisor uses Claude Sonnet 4.5; investigator uses Claude Haiku 4.5. Accessed via cross-region inference profiles (71 enabled).</td></tr>
+    <tr><td><strong>Bedrock AgentCore — Runtime</strong></td><td>Serverless container hosting for every agent (supervisor + 7 specialists + 3 MCP tool servers). Python 3.11, session idle 900s / max 8h.</td></tr>
+    <tr><td><strong>AgentCore — Gateway</strong></td><td>MCP endpoint (AWS_IAM auth) fronting tool targets: AWS API MCP, CloudWatch MCP, AWS Knowledge MCP, Jira (OpenAPI).</td></tr>
+    <tr><td><strong>AgentCore — Memory</strong></td><td>Per-agent conversational memory (short-term events, 30-day expiry).</td></tr>
+    <tr><td><strong>AgentCore — Identity</strong></td><td>Workload identities per runtime + token vault (credential providers for Gateway OAuth2 and Jira API key).</td></tr>
+  </table>
+
+  <h3>Application &amp; edge</h3>
+  <table>
+    <tr><th>Service</th><th>Why it is needed</th></tr>
+    <tr><td><strong>Amazon S3</strong></td><td>Hosts the static SPA; also stores runtime deployment zips and analytics/eval data.</td></tr>
+    <tr><td><strong>Amazon CloudFront</strong></td><td>TLS edge for the SPA + <code>/api/*</code> routing to the ALB.</td></tr>
+    <tr><td><strong>Application Load Balancer</strong></td><td>Internet-facing entry to the backend on port 8000.</td></tr>
+    <tr><td><strong>Amazon ECS (Fargate)</strong></td><td>Runs the FastAPI backend (2 tasks). No app logic in Lambda.</td></tr>
+    <tr><td><strong>Amazon EFS</strong></td><td>Shared encrypted state mounted to backend tasks.</td></tr>
+    <tr><td><strong>Amazon DynamoDB</strong></td><td><code>chat-requests</code> table — correlates each async chat request for the fire-and-poll / SSE pattern.</td></tr>
+    <tr><td><strong>Amazon VPC</strong></td><td>3-tier <code>dev-vpc</code> for the backend; VPC endpoints for ECR/logs/monitoring.</td></tr>
+  </table>
+
+  <h3>Identity, data &amp; secrets</h3>
+  <table>
+    <tr><th>Service</th><th>Why it is needed</th></tr>
+    <tr><td><strong>Amazon Cognito</strong></td><td>End-user login (SPA web client) + M2M client issuing JWTs for MCP runtime authorization.</td></tr>
+    <tr><td><strong>AWS Secrets Manager</strong></td><td>Per-tenant cross-account credentials under <code>msp-credentials/&lt;tenant&gt;</code>; Jira API key; token-vault backing.</td></tr>
+    <tr><td><strong>AWS STS + cross-account IAM roles</strong></td><td>The MSP account assumes a role in each tenant AWS account (unique <code>external_id</code>, role <code>MSP-&lt;tenant&gt;-Role</code>).</td></tr>
+    <tr><td><strong>Telemetry database (PostgreSQL / RDS)</strong></td><td>Holds each tenant's OpenTelemetry data (<code>otel_metrics</code>, <code>otel_logs</code>, <code>otel_spans</code>) that the RCA investigator queries.</td></tr>
+    <tr><td><strong>Amazon CloudWatch + X-Ray / Application Signals</strong></td><td>Runtime logs, traces and APM for the agents themselves (observability).</td></tr>
+    <tr><td><strong>AWS CloudTrail</strong></td><td>Audit trail (org + local trails).</td></tr>
+  </table>
+
+  <h3>Tooling / IaC</h3>
+  <ul>
+    <li><strong>AWS CDK</strong> for the frontend/backend stacks; the AgentCore SDK + <strong>CodeBuild</strong> to package and build each runtime.</li>
+    <li><strong>Jira</strong> (external) reached through the Gateway OpenAPI target using an API key from the token vault.</li>
+  </ul>
+</section>
+
+<!-- ========================================================= -->
+<section id="architecture">
+  <h2 class="sec">3. Detailed architecture</h2>
+  <p>The platform has three planes: an <strong>application plane</strong> (SPA → CloudFront → ALB → Fargate),
+  an <strong>agent plane</strong> (AgentCore supervisor + specialists), and a <strong>tool/data plane</strong>
+  (Gateway/MCP tools, the tenant telemetry DB, and downstream AWS/Jira).</p>
+
+  <figure class="fig">
+    <img src="assets/component-overview.png" alt="Component overview" />
+    <figcaption>Component overview — who talks to whom across the three planes.</figcaption>
+  </figure>
+
+  <h3>Component-by-component</h3>
+
+  <h4>Amazon CloudFront + S3 (edge / SPA)</h4>
+  <p>The chat SPA is static assets in S3, served over TLS by CloudFront. The same distribution routes
+  <code>/api/*</code> to the ALB, so the browser talks to a single origin. This is the
+  <span class="mono">d2e9bh1pq1a0sj.cloudfront.net/app</span> you see in the UI.</p>
+
+  <h4>ALB → ECS Fargate backend (application plane)</h4>
+  <p>A public ALB forwards to a FastAPI service on Fargate (2 tasks, port 8000). The backend is the
+  <em>only</em> HTTP surface — it holds <strong>no agent logic</strong>. Its jobs: verify the Cognito JWT,
+  switch to the selected tenant's credentials, persist the request to DynamoDB, invoke the supervisor runtime,
+  and stream progress back via SSE.</p>
+
+  <h4>Cognito (identity)</h4>
+  <p>User pool <code>us-east-1_vyWBkPHjd</code>. The SPA web client handles interactive login; an M2M client
+  issues JWTs (scope <code>mcp-server/invoke</code>) used to authorize calls into the MCP tool runtimes.</p>
+
+  <h4>DynamoDB (request correlation)</h4>
+  <p>Because agent work is long-running, the backend uses a <strong>fire-and-poll</strong> pattern:
+  <code>POST /chat</code> enqueues a background task and returns a <code>request_id</code>; the SPA polls
+  <code>GET /chat/{id}</code> or subscribes to <code>GET /chat/{id}/stream</code> (SSE). Progress events
+  (agent switches, tool calls, content chunks) are written to the <code>chat-requests</code> table as they happen.</p>
+
+  <h4>AgentCore Supervisor Runtime <span class="pill http">HTTP</span></h4>
+  <p>A LangGraph <code>create_react_agent</code> with 7 delegation tools. It loads recent memory, reasons about
+  intent, and calls one or more specialists via <code>InvokeAgentRuntime</code> (A2A). The supervisor's IAM role
+  carries an <code>InvokeA2ASpecialists</code> permission — the IAM expression of the orchestration pattern.</p>
+
+  <h4>Specialist Runtimes <span class="pill a2a">A2A</span></h4>
+  <p>Seven specialists: <strong>investigator</strong> (RCA over the telemetry DB), <strong>cloudwatch</strong>
+  (live alarms/metrics/logs), <strong>security</strong>, <strong>cost</strong>, <strong>jira</strong>,
+  <strong>knowledge</strong>, <strong>advisor</strong>. Each is its own runtime with its own IAM role and memory,
+  and each runs the same ReAct loop pattern with domain-specific tools.</p>
+
+  <h4>Gateway / MCP tool runtimes (tool plane) <span class="pill mcp">MCP</span></h4>
+  <p>Live AWS reads and Jira go through the AgentCore Gateway (MCP, AWS_IAM) and dedicated MCP tool runtimes
+  (AWS API, CloudWatch, AWS Knowledge — Cognito-JWT authorized). The RCA investigator is different: it talks
+  <em>directly</em> to the tenant telemetry database with a SQL toolkit (not through the Gateway).</p>
+
+  <h4>Amazon Bedrock (model plane)</h4>
+  <p>Every reasoning step is a Bedrock <code>InvokeModel</code> call. Supervisor → Claude Sonnet 4.5;
+  investigator → Claude Haiku 4.5 (fast, cheap, many SQL turns). <code>temperature=0</code> for determinism.</p>
+
+  <div class="callout warn">
+    <div class="t">Network mode</div>
+    AgentCore runtimes run in AgentCore-managed <strong>PUBLIC</strong> network mode — they are <em>not</em> inside
+    <code>dev-vpc</code>. Only the ECS backend and its data/mount resources live in the VPC.
+  </div>
+</section>
+
+<!-- ========================================================= -->
+<section id="flow">
+  <h2 class="sec">4. End-to-end request flow</h2>
+  <p>The canonical path for one question that needs one specialist. Every hop emits logs to CloudWatch and
+  spans to X-Ray / Application Signals.</p>
+
+  <figure class="fig">
+    <img src="assets/full-sequence.png" alt="Full end-to-end sequence" />
+    <figcaption>Full end-to-end happy-path sequence (browser → supervisor → specialist → tool → Bedrock → back).</figcaption>
+  </figure>
+
+  <ol>
+    <li><strong>Browser → CloudFront → ALB → Fargate.</strong> The SPA sends the chat message + Cognito <code>id_token</code> to <code>POST /chat</code>.</li>
+    <li><strong>Auth.</strong> Backend verifies the JWT against Cognito and extracts <code>user_id</code>.</li>
+    <li><strong>Tenant switch.</strong> Backend calls <code>WorkspaceContext.set_current_account(account_name)</code>, fetching that tenant's STS creds from Secrets Manager into a per-request <code>ContextVar</code> (no cross-request leakage).</li>
+    <li><strong>Persist + session.</strong> Backend writes the request to DynamoDB and derives <code>session_id = msp-{user_id}-{conversation_id}</code>.</li>
+    <li><strong>Memory load.</strong> Backend loads the last 3 turns (STM) for context.</li>
+    <li><strong>Invoke supervisor.</strong> <code>invoke_agent_runtime</code> (HTTP) with payload <code>{prompt, account_name, session_id, user_context}</code>.</li>
+    <li><strong>Supervisor reasons + routes.</strong> LangGraph ReAct: Bedrock decides which tool(s) to call, then invokes the specialist(s) via A2A.</li>
+    <li><strong>Specialist ReAct loop.</strong> The specialist calls its tools (SQL on the tenant DB, or live AWS via MCP with tenant STS creds), reasons over results, composes an answer.</li>
+    <li><strong>Synthesis.</strong> Supervisor combines specialist output into a final grounded answer; the turn is saved to memory.</li>
+    <li><strong>Stream back.</strong> Progress + content events flow to DynamoDB → SSE → SPA renders the answer with the acting agent + latency.</li>
+  </ol>
+
+  <div class="callout">
+    <div class="t">RCA fast path</div>
+    For RCA/investigate queries the backend can call the <strong>investigator directly</strong> (bypassing the
+    supervisor) to avoid orchestration timeouts, then fall back to the supervisor on error. Functionally the
+    investigator does the same work either way.
+  </div>
+</section>
+
+<!-- ========================================================= -->
+<section id="agentcore">
+  <h2 class="sec">5. AgentCore components — significance &amp; how we used each</h2>
+
+  <table>
+    <tr><th>Component</th><th>What it is</th><th>How this POC uses it</th></tr>
+    <tr>
+      <td><strong>Runtime</strong></td>
+      <td>Serverless, session-isolated container hosting for agents; supports HTTP, A2A and MCP protocols.</td>
+      <td>15 runtimes: 1 supervisor (HTTP), 7 specialists (A2A), 3 MCP tool servers, 3 legacy. Each has its own IAM role + memory. Session idle 900s / max 8h.</td>
+    </tr>
+    <tr>
+      <td><strong>Gateway</strong></td>
+      <td>Turns APIs/Lambdas/MCP servers into governed MCP tools behind one endpoint with managed auth.</td>
+      <td>MCP gateway (AWS_IAM) fronting AWS API MCP, CloudWatch MCP, AWS Knowledge MCP, and Jira (OpenAPI). Specialists call tools through it.</td>
+    </tr>
+    <tr>
+      <td><strong>Memory</strong></td>
+      <td>Managed short-term (events) + long-term (strategy-extracted records) conversational memory.</td>
+      <td>One STM memory per agent (30-day expiry, <code>strategies: []</code>). Supervisor loads last 3 turns, saves each turn. LTM strategies exist but are not yet wired (see §6).</td>
+    </tr>
+    <tr>
+      <td><strong>Identity</strong></td>
+      <td>Workload identities for agents + a token vault for outbound credentials (OAuth2 / API key).</td>
+      <td>Per-runtime workload identity; token vault holds Gateway OAuth2 providers + the Jira API key, fetched at runtime via <code>GetResourceApiKey</code> / <code>GetResourceOauth2Token</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>Observability</strong></td>
+      <td>Built-in CloudWatch logs + X-Ray/GenAI spans + Application Signals for every runtime.</td>
+      <td>Per-runtime log groups <code>/aws/bedrock-agentcore/runtimes/&lt;name&gt;-DEFAULT</code>, OTEL span streams, App Signals enabled. See §11.</td>
+    </tr>
+    <tr>
+      <td><strong>Guardrails / Policy</strong></td>
+      <td>Bedrock Guardrails for PII, denied topics, prompt-injection filtering.</td>
+      <td><span class="tag-med">Gap:</span> runtimes hold <code>ApplyGuardrail</code> permission but no guardrail is configured yet. Input is sanitized in-code (<code>sanitize_user_input</code>).</td>
+    </tr>
+  </table>
+
+  <h3>Supervisor routing logic</h3>
+  <figure class="fig">
+    <img src="assets/supervisor-routing.png" alt="Supervisor routing logic" />
+    <figcaption>Supervisor routing — intent analysis → specialist selection → collect → synthesize.</figcaption>
+  </figure>
+  <p>The supervisor's system prompt encodes SRE methodology: for RCA it <strong>investigates first</strong>
+  (tenant DB telemetry via <code>investigate_scenario</code>), then <strong>validates</strong> against live AWS
+  (<code>check_cloudwatch</code>), then synthesizes. It never asks which tenant — the <code>account_name</code>
+  is passed automatically and all tools are tenant-scoped.</p>
+</section>
+
+<!-- ========================================================= -->
+<section id="memory">
+  <h2 class="sec">6. Memory &amp; ReAct internals</h2>
+
+  <h3>The specialist ReAct loop</h3>
+  <figure class="fig">
+    <img src="assets/specialist-react-loop.png" alt="Specialist ReAct loop" />
+    <figcaption>Every specialist runs the same LangGraph ReAct loop: reason → select tool → invoke → observe → repeat → answer.</figcaption>
+  </figure>
+  <p>Each specialist is a LangGraph <code>create_react_agent(llm, tools, prompt)</code>. The loop:</p>
+  <ol>
+    <li><strong>Reason</strong> — Bedrock decides whether a tool is needed and which one, with what arguments.</li>
+    <li><strong>Act</strong> — invoke the tool (SQL query, or live AWS read via MCP with tenant creds).</li>
+    <li><strong>Observe</strong> — the tool result is appended to the message history.</li>
+    <li><strong>Repeat</strong> — the model sees the observation and decides the next step (recursion limit 30 for the investigator).</li>
+    <li><strong>Answer</strong> — when no more tools are needed, compose the final structured response.</li>
+  </ol>
+
+  <h3>Memory write/read path (as deployed)</h3>
+  <figure class="fig">
+    <img src="assets/memory-path.png" alt="Memory write/read path" />
+    <figcaption>Short-term memory only: <code>create_event</code> / <code>list_events</code>. No strategies attached → no cross-session extraction.</figcaption>
+  </figure>
+  <p>Memory is keyed by <code>actorId</code> (the user) and <code>sessionId</code> (the conversation). The supervisor
+  loads the last 3 turns before reasoning and writes the turn after answering. Because <code>strategies: []</code>,
+  there is no semantic/episodic long-term recall yet — a known gap (§12).</p>
+</section>
+
+<!-- ========================================================= -->
+<section id="tenancy">
+  <h2 class="sec">7. Multi-tenancy model</h2>
+  <p>A <strong>tenant = a customer AWS account</strong> that the MSP manages. Tenants are added through the SPA's
+  3-step "Add Customer Account" wizard, which maps exactly to the backend <code>account_service</code> flow.</p>
+
+  <figure class="fig">
+    <img src="assets/auth-flow.png" alt="Auth and authorization flow" />
+    <figcaption>Authentication &amp; authorization — what is verified at each layer.</figcaption>
+  </figure>
+
+  <h3>Adding a tenant (the wizard = the code)</h3>
+  <table>
+    <tr><th>Wizard step</th><th>Backend call</th><th>What happens</th></tr>
+    <tr><td>1. Customer Info</td><td>—</td><td>Operator types a display name (e.g. <code>demo_tenant_3</code>) → sanitized to <code>snake_case</code>.</td></tr>
+    <tr><td>2. Setup Instructions</td><td><code>prepare_account()</code></td><td>Generates a stable <code>external_id = msp-&lt;name&gt;-&lt;uuid8&gt;</code> and role name <code>MSP-&lt;name&gt;-Role</code>; stores in Secrets Manager (<code>status=preparing</code>). Operator creates that IAM role in the tenant's AWS account.</td></tr>
+    <tr><td>3. Test Connection</td><td><code>create_account()</code></td><td>Operator supplies the tenant AWS account ID; backend does an <code>sts:AssumeRole</code>. Success → <code>status=active</code>; failure → <code>pending</code> (fix trust policy, retry).</td></tr>
+  </table>
+
+  <h3>How isolation works at request time</h3>
+  <ul>
+    <li><strong>Selected tenant → credentials.</strong> The account switcher in the SPA sets <code>account_name</code>. The backend resolves that to the tenant's STS credentials (<code>msp-credentials/&lt;name&gt;</code>) held in a per-request <code>ContextVar</code>.</li>
+    <li><strong>Credentials flow to tools.</strong> Live-AWS tools (e.g. CloudWatch) build a boto3 session from those tenant STS creds, so every AWS read hits the <em>tenant's</em> account, not the MSP account.</li>
+    <li><strong>Telemetry DB filter.</strong> The RCA investigator passes <code>tenant_id</code> and is instructed to filter every query by it.</li>
+  </ul>
+
+  <div class="callout danger">
+    <div class="t">Known limitation — telemetry DB isolation</div>
+    The investigator's per-tenant filter is currently <strong>enforced by instructing the model</strong>. The SQL
+    toolkit still has schema-wide read access to the shared <code>otel_*</code> tables, and <code>tenant_id</code> is
+    regex-sanitized (prevents injection) but the filter is not guaranteed to be applied. Hard isolation needs a
+    <strong>DB-level control</strong> — a per-tenant Postgres role or Row-Level Security. This is documented in the
+    repo and tracked as a gap; do not rely on it for hard data separation as-is.
+  </div>
+
+  <p class="muted">In the screenshots, the account switcher lists <code>poc_account (021448121605)</code>,
+  <code>acme</code>, and <code>test_tenant</code>. In the journeys below we use <strong>Tenant&nbsp;1</strong> and
+  <strong>Tenant&nbsp;2</strong> as two such customer accounts with different problems.</p>
+</section>
+
+<!-- ========================================================= -->
+<section id="tenant1">
+  <h2 class="sec">8. Tenant 1 journey — RCA for a slowness / latency issue</h2>
+
+  <div class="tenant-banner t1">
+    <h3>Tenant 1 · <span class="mono">acme_corp</span></h3>
+    <div class="meta">Operator: <span class="mono">alice@msp.example</span> · Selected account: <span class="mono">acme_corp (0214-4812-1605)</span>
+    · Question: <em>"Checkout feels slow for our customers since this morning — can you find the root cause?"</em></div>
+  </div>
+
+  <h3>8.1 Authentication &amp; authorization</h3>
+  <div class="step t1"><div class="n">A</div><div class="body">
+    <div class="h">Login <span class="where">SPA → Cognito web client</span></div>
+    Alice signs in; Cognito returns an <code>id_token</code> (JWT) with her <code>sub</code> and email claims.
+  </div></div>
+  <div class="step t1"><div class="n">B</div><div class="body">
+    <div class="h">Tenant selection <span class="where">SPA account switcher</span></div>
+    She picks <span class="mono">acme_corp</span>. The SPA sends <code>account_name: "acme_corp"</code> with the request.
+  </div></div>
+  <div class="step t1"><div class="n">C</div><div class="body">
+    <div class="h">JWT verification + tenant credential switch <span class="where">Fargate backend</span></div>
+    Backend verifies the JWT, then <code>set_current_account("acme_corp")</code> → fetches
+    <code>msp-credentials/acme_corp</code> STS creds into a per-request ContextVar. Authorization to Acme's AWS
+    account is via the cross-account role <code>MSP-acme_corp-Role</code> (assumed with the stored <code>external_id</code>).
+  </div></div>
+
+  <h3>8.2 Request construction</h3>
+  <pre><code>POST /chat            (Authorization: Bearer &lt;id_token&gt;)
+{
+  "message": "Checkout feels slow since this morning — find the root cause",
+  "account_name": "acme_corp",
+  "conversation_id": "c-8841"
+}
+&rarr; backend derives session_id = "msp-&lt;alice_sub&gt;-c-8841"
+&rarr; DynamoDB put(request_id), returns request_id; SPA opens SSE /chat/{id}/stream</code></pre>
+
+  <h3>8.3 Supervisor routing (ReAct)</h3>
+  <p>The supervisor loads the last 3 turns, then Bedrock (Claude Sonnet 4.5) classifies intent as
+  <strong>RCA / performance degradation</strong>. Per its SRE prompt it chooses to <strong>investigate first,
+  then validate</strong>:</p>
+  <pre><code>Supervisor tool call #1  &rarr; investigate_scenario(
+   prompt="Checkout latency degraded since this morning. Find root cause."
+)   # A2A InvokeAgentRuntime &rarr; investigator, payload includes account_name="acme_corp"</code></pre>
+
+  <h3>8.4 Investigator ReAct loop (SQL over the tenant telemetry DB)</h3>
+  <p>The investigator builds a per-tenant SQL agent over <code>otel_metrics</code>, <code>otel_logs</code>,
+  <code>otel_spans</code> and follows its 7-phase methodology. Representative tool calls:</p>
+
+  <div class="step t1"><div class="n">1</div><div class="body">
+    <div class="h"><code>sql_db_list_tables</code> <span class="where">Phase 1 — discovery</span></div>
+    → <span class="muted">otel_metrics, otel_logs, otel_spans</span>
+  </div></div>
+  <div class="step t1"><div class="n">2</div><div class="body">
+    <div class="h"><code>sql_db_schema</code> (otel_metrics, otel_spans) <span class="where">understand columns</span></div>
+    Learns columns: <code>ts, metric_name, value, labels(jsonb)</code>; spans have <code>service, duration_ms, trace_id</code>.
+  </div></div>
+  <div class="step t1"><div class="n">3</div><div class="body">
+    <div class="h"><code>sql_db_query</code> — quantify the symptom <span class="where">Phase 2</span></div>
+    <pre><code>SELECT date_trunc('hour',ts) h, avg(value)
+FROM otel_metrics
+WHERE tenant_id='acme_corp' AND metric_name='checkout_latency_ms'
+GROUP BY 1 ORDER BY 1;   -- p50 rose 180ms &rarr; 1450ms after 08:00</code></pre>
+  </div></div>
+  <div class="step t1"><div class="n">4</div><div class="body">
+    <div class="h"><code>sql_db_query</code> — narrow by dimension <span class="where">Phase 3 (the key step)</span></div>
+    <pre><code>SELECT labels-&gt;&gt;'region' region, avg(value)
+FROM otel_metrics
+WHERE tenant_id='acme_corp' AND metric_name='checkout_latency_ms'
+GROUP BY 1 ORDER BY 2 DESC;   -- Region-B slow, A/C normal</code></pre>
+  </div></div>
+  <div class="step t1"><div class="n">5</div><div class="body">
+    <div class="h"><code>sql_db_query</code> — correlate spans <span class="where">Phase 4</span></div>
+    <pre><code>SELECT service, avg(duration_ms)
+FROM otel_spans
+WHERE tenant_id='acme_corp' AND labels-&gt;&gt;'region'='Region-B'
+GROUP BY 1 ORDER BY 2 DESC;   -- payment-service span dominates</code></pre>
+  </div></div>
+  <div class="step t1"><div class="n">6</div><div class="body">
+    <div class="h"><code>sql_db_query_checker</code> then <code>sql_db_query</code> — false-lead elimination <span class="where">Phase 5</span></div>
+    Confirms CPU/memory/GC on Region-B pods are normal → rules out compute exhaustion; the slow
+    payment span is isolated to a connection-pool exhaustion after an 08:00 config change (from <code>otel_logs</code> infra_change stream).
+  </div></div>
+  <div class="step t1"><div class="n">7</div><div class="body">
+    <div class="h">Compose RCA report <span class="where">Phase 6–7</span></div>
+    Returns the structured report (summary, findings, affected dimensions, causal chain, dismissed leads,
+    root cause, confidence, resolution) to the supervisor.
+  </div></div>
+
+  <h3>8.5 Validation against live AWS</h3>
+  <pre><code>Supervisor tool call #2  &rarr; check_cloudwatch(
+   prompt="Any active alarms on payment-service / connection pool in Region-B?"
+)   # A2A &rarr; cloudwatch specialist
+    # tool: get_cloudwatch_data(query="alarms") using acme_corp STS creds
+    # &rarr; confirms a DB-connection alarm in ALARM state since 08:05</code></pre>
+
+  <h3>8.6 Synthesis &amp; response</h3>
+  <p>The supervisor merges the RCA (root cause = connection-pool exhaustion after the 08:00 deploy) with the live
+  alarm confirmation, writes the turn to memory, and streams the final answer. The SPA renders it with the acting
+  agent badge (<em>Investigator → CloudWatch</em>) and total latency.</p>
+
+  <div class="callout ok"><div class="t">Result for Tenant 1</div>
+  Grounded RCA: checkout p50 1450ms (from 180ms), isolated to Region-B payment-service connection-pool exhaustion
+  introduced by the 08:00 config change, corroborated by a live CloudWatch DB-connection alarm. Recommendation:
+  roll back / raise pool size and verify latency returns to baseline.</div>
+</section>
+
+<!-- ========================================================= -->
+<section id="tenant2">
+  <h2 class="sec">9. Tenant 2 journey — RCA for an error-rate increase</h2>
+
+  <div class="tenant-banner t2">
+    <h3>Tenant 2 · <span class="mono">test_tenant</span></h3>
+    <div class="meta">Operator: <span class="mono">bob@msp.example</span> · Selected account: <span class="mono">test_tenant</span>
+    · Question: <em>"Our API error rate jumped this afternoon — do an RCA and open a ticket if it's real."</em></div>
+  </div>
+
+  <div class="callout">
+    <div class="t">Same machinery, different tenant &amp; signal</div>
+    This is the <strong>identical pipeline</strong> as Tenant 1 — the only differences are the selected
+    <code>account_name</code> (→ different STS creds &amp; <code>tenant_id</code> filter), the symptom metric
+    (error rate vs latency), and that this journey also exercises the <strong>Jira</strong> specialist.
+  </div>
+
+  <h3>9.1 Authentication &amp; authorization</h3>
+  <div class="step t2"><div class="n">A</div><div class="body">
+    <div class="h">Login <span class="where">SPA → Cognito</span></div>
+    Bob signs in; separate Cognito identity (<code>actorId</code>) → his own memory namespace, distinct from Alice's.
+  </div></div>
+  <div class="step t2"><div class="n">B</div><div class="body">
+    <div class="h">Tenant selection <span class="where">account switcher</span></div>
+    Bob selects <span class="mono">test_tenant</span> → <code>account_name: "test_tenant"</code>.
+  </div></div>
+  <div class="step t2"><div class="n">C</div><div class="body">
+    <div class="h">Credential switch <span class="where">backend</span></div>
+    <code>set_current_account("test_tenant")</code> → STS creds from <code>msp-credentials/test_tenant</code> via role
+    <code>MSP-test_tenant-Role</code>. <strong>Crucially, this is a different account than Tenant 1</strong> — the
+    ContextVar guarantees Bob's request never sees Acme's credentials even under concurrency.
+  </div></div>
+
+  <h3>9.2 Request construction</h3>
+  <pre><code>POST /chat            (Authorization: Bearer &lt;bob_id_token&gt;)
+{
+  "message": "API error rate jumped this afternoon — RCA and open a ticket if real",
+  "account_name": "test_tenant",
+  "conversation_id": "c-2207",
+  "workflow_enabled": true
+}
+&rarr; session_id = "msp-&lt;bob_sub&gt;-c-2207"</code></pre>
+
+  <h3>9.3 Supervisor routing (ReAct)</h3>
+  <p>Intent = RCA (error spike) <em>plus</em> a ticketing action. Supervisor plans investigate → validate → file ticket:</p>
+  <pre><code>tool call #1 &rarr; investigate_scenario(prompt="API error rate spiked this afternoon. Root cause?")
+tool call #2 &rarr; check_cloudwatch(prompt="Active alarms / 5xx on the API this afternoon?")
+tool call #3 &rarr; manage_jira(prompt="Create incident: API 5xx spike, root cause &lt;...&gt;")</code></pre>
+
+  <h3>9.4 Investigator ReAct loop (error-rate signal)</h3>
+  <div class="step t2"><div class="n">1</div><div class="body">
+    <div class="h"><code>sql_db_list_tables</code> + <code>sql_db_schema</code> <span class="where">Phase 1</span></div>
+    Same discovery, but filtered by <code>tenant_id='test_tenant'</code>.
+  </div></div>
+  <div class="step t2"><div class="n">2</div><div class="body">
+    <div class="h"><code>sql_db_query</code> — quantify error rate <span class="where">Phase 2</span></div>
+    <pre><code>SELECT date_trunc('hour',ts) h, avg(value)
+FROM otel_metrics
+WHERE tenant_id='test_tenant' AND metric_name='api_error_rate'
+GROUP BY 1 ORDER BY 1;   -- 0.2% &rarr; 6.8% after 14:00</code></pre>
+  </div></div>
+  <div class="step t2"><div class="n">3</div><div class="body">
+    <div class="h"><code>sql_db_query</code> — narrow by endpoint + status <span class="where">Phase 3</span></div>
+    <pre><code>SELECT labels-&gt;&gt;'route' route, labels-&gt;&gt;'status' st, count(*)
+FROM otel_logs
+WHERE tenant_id='test_tenant' AND ts &gt; '14:00'
+GROUP BY 1,2 ORDER BY 3 DESC;   -- POST /orders 503s dominate</code></pre>
+  </div></div>
+  <div class="step t2"><div class="n">4</div><div class="body">
+    <div class="h"><code>sql_db_query</code> — correlate to a dependency <span class="where">Phase 4</span></div>
+    Joins <code>otel_spans</code> for <code>/orders</code>: downstream <code>inventory-service</code> returning 503 →
+    traces to a failing pod after a 14:00 rollout (infra_change_logs).
+  </div></div>
+  <div class="step t2"><div class="n">5</div><div class="body">
+    <div class="h">False-lead elimination + report <span class="where">Phase 5–7</span></div>
+    Confirms errors only on <code>/orders</code> (not global) → dependency fault, not gateway. Produces the structured RCA.
+  </div></div>
+
+  <h3>9.5 Validation + ticket creation</h3>
+  <pre><code>check_cloudwatch  &rarr; get_cloudwatch_data(query="alarms")  # test_tenant STS creds
+                   &rarr; 5xxErrorRate alarm ALARM since 14:03  (confirms it is real)
+manage_jira       &rarr; Gateway OpenAPI target (Jira), API key from AgentCore token vault
+                   &rarr; creates INCIDENT ticket "API 5xx spike — inventory-service", returns key OPS-4471</code></pre>
+
+  <h3>9.6 Synthesis &amp; response</h3>
+  <p>Supervisor synthesizes: root cause = inventory-service failing after the 14:00 rollout causing 503s on
+  <code>/orders</code>; confirmed by the live 5xx alarm; incident <code>OPS-4471</code> filed. Turn saved to Bob's memory;
+  answer streamed to the SPA with agent badges <em>Investigator → CloudWatch → Jira</em>.</p>
+
+  <div class="callout ok"><div class="t">Result for Tenant 2</div>
+  Error rate 0.2%→6.8% localized to <code>POST /orders</code> 503s from a failed inventory-service rollout at 14:00,
+  confirmed by a live 5xx alarm, and a Jira incident (OPS-4471) opened automatically. Recommendation: roll back the
+  14:00 inventory-service deploy and verify error rate returns to baseline.</div>
+</section>
+
+<!-- ========================================================= -->
+<section id="compare">
+  <h2 class="sec">10. Side-by-side comparison</h2>
+  <table>
+    <tr><th>Aspect</th><th>Tenant 1 (acme_corp)</th><th>Tenant 2 (test_tenant)</th></tr>
+    <tr><td>Operator identity (Cognito <code>actorId</code>)</td><td>alice@…</td><td>bob@… (separate memory namespace)</td></tr>
+    <tr><td>Selected <code>account_name</code></td><td><code>acme_corp</code></td><td><code>test_tenant</code></td></tr>
+    <tr><td>Cross-account role assumed</td><td><code>MSP-acme_corp-Role</code></td><td><code>MSP-test_tenant-Role</code></td></tr>
+    <tr><td>Telemetry filter</td><td><code>tenant_id='acme_corp'</code></td><td><code>tenant_id='test_tenant'</code></td></tr>
+    <tr><td>Symptom metric</td><td><code>checkout_latency_ms</code> (180→1450ms)</td><td><code>api_error_rate</code> (0.2%→6.8%)</td></tr>
+    <tr><td>Root cause found</td><td>Connection-pool exhaustion after 08:00 config change (Region-B)</td><td>inventory-service 503s after 14:00 rollout (/orders)</td></tr>
+    <tr><td>Specialists used</td><td>investigator → cloudwatch</td><td>investigator → cloudwatch → jira</td></tr>
+    <tr><td>Side effect</td><td>none</td><td>Jira incident OPS-4471 created</td></tr>
+    <tr><td>Isolation mechanism</td><td colspan="2">Per-request <code>ContextVar</code> (creds) + per-tenant STS + instructed <code>tenant_id</code> DB filter (see limitation §7)</td></tr>
+  </table>
+
+  <p>The takeaway: the <strong>agent logic is identical and tenant-agnostic</strong>. Multi-tenancy is achieved by
+  swapping credentials and the <code>tenant_id</code> filter per request — not by deploying separate agents per tenant.</p>
+</section>
+
+<!-- ========================================================= -->
+<section id="observability">
+  <h2 class="sec">11. Observability</h2>
+  <p>AgentCore wires observability into every runtime automatically. What you can trace for any invocation:</p>
+  <ul>
+    <li><strong>CloudWatch Logs</strong> — per-runtime groups <code>/aws/bedrock-agentcore/runtimes/&lt;runtime&gt;-DEFAULT</code>
+    (supervisor, each specialist, each MCP server). Look for <code>runtime-logs-*</code> streams for app logs and
+    <code>otel-rt-logs</code> / <code>spans</code> streams for telemetry.</li>
+    <li><strong>X-Ray / GenAI spans</strong> — each hop (backend → supervisor → specialist → tool → Bedrock) is a span,
+    so a single question produces one trace tree across runtimes.</li>
+    <li><strong>Application Signals (APM)</strong> — service-level latency/error/throughput views.</li>
+    <li><strong>DynamoDB request record</strong> — the <code>chat-requests</code> item carries the progress-event trail
+    (agent switches, tool calls) that the SPA streamed.</li>
+  </ul>
+  <div class="callout warn"><div class="t">Practical note when tracing</div>
+    To trace a specific question end-to-end, correlate on the <code>session_id</code> (<code>msp-&lt;user&gt;-&lt;conv&gt;</code>)
+    and the supervisor's per-specialist <code>runtimeSessionId</code> (<code>sup-&lt;uuid&gt;</code> / <code>rca-&lt;uuid&gt;</code>).
+    If a runtime shows no recent streams, no invocation reached it in that window.
+  </div>
+</section>
+
+<!-- ========================================================= -->
+<section id="gaps">
+  <h2 class="sec">12. Findings &amp; gaps</h2>
+  <p>Carried forward from the live discovery and the agent code — the honest state of the POC.</p>
+  <table>
+    <tr><th>#</th><th>Severity</th><th>Finding</th><th>Recommendation</th></tr>
+    <tr><td>1</td><td class="tag-high">High</td><td>Telemetry-DB tenant isolation is model-instructed only (schema-wide SQL access).</td><td>Add Postgres Row-Level Security or per-tenant DB roles on the <code>otel_*</code> tables.</td></tr>
+    <tr><td>2</td><td class="tag-high">High</td><td><code>msp-gateway-execution-role</code> has <code>AdministratorAccess</code>.</td><td>Scope to least privilege (invoke specific MCP targets / required reads only).</td></tr>
+    <tr><td>3</td><td class="tag-med">Med</td><td>No Bedrock Guardrails, though runtimes hold <code>ApplyGuardrail</code>.</td><td>Add PII / denied-topic / prompt-injection guardrails on model calls.</td></tr>
+    <tr><td>4</td><td class="tag-med">Med</td><td>All live agent memories are STM-only (<code>strategies: []</code>); no episodic recall.</td><td>Attach SEMANTIC + SUMMARIZATION (and EPISODIC for investigator/cloudwatch) to the per-agent memories.</td></tr>
+    <tr><td>5</td><td class="tag-med">Med</td><td>No per-tenant memory namespace design.</td><td>Define <code>tenant/{id}/agent/{name}/actor/{actorId}/…</code> before enabling strategies.</td></tr>
+    <tr><td>6</td><td class="tag-low">Low</td><td>CloudWatch log retention = never; single NAT; legacy <code>MotadataAgents_*</code> runtimes remain.</td><td>Set retention, add NAT per AZ if HA matters, decommission legacy runtimes.</td></tr>
+  </table>
+
+  <hr />
+  <p class="muted center">Generated from the deployed POC in account <code>001961766007</code> (us-east-1) and the
+  <code>POC/agentcore-poc-dev</code> source. Tenant journeys are realistic reconstructions grounded in the actual agent
+  code; illustrative payloads/queries are labelled as such.</p>
+</section>
+
+</main>
+</div>
+
+<script>
+// Scroll-spy: highlight active nav item
+const items = Array.from(document.querySelectorAll('nav.side a.item'));
+const map = {};
+items.forEach(a => { const id=a.getAttribute('href').slice(1); map[id]=a; });
+const sections = items.map(a => document.getElementById(a.getAttribute('href').slice(1))).filter(Boolean);
+const obs = new IntersectionObserver((entries)=>{
+  entries.forEach(e=>{
+    if(e.isIntersecting){
+      items.forEach(i=>i.classList.remove('active'));
+      const a = map[e.target.id];
+      if(a) a.classList.add('active');
+    }
+  });
+},{rootMargin:'-10% 0px -80% 0px', threshold:0});
+sections.forEach(s=>obs.observe(s));
+</script>
+</body>
+</html>

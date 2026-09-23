@@ -21,7 +21,7 @@ class Settings:
     db_name: str = os.getenv("DB_NAME", "cshub")
     db_secret_arn: str = os.getenv("DB_SECRET_ARN", "")
     embedding_model_id: str = os.getenv("EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0")
-    generation_model_id: str = os.getenv("GENERATION_MODEL_ID", "anthropic.claude-sonnet-4-5-20250929-v1:0")
+    generation_model_id: str = os.getenv("GENERATION_MODEL_ID", "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
     embedding_dim: int = int(os.getenv("EMBEDDING_DIM", "1024"))
     top_k: int = int(os.getenv("TOP_K", "6"))
     guardrail_id: str = os.getenv("GUARDRAIL_ID", "")

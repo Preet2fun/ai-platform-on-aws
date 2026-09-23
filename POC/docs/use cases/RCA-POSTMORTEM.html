@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RCA Investigation — End-to-End Request Flow</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#fff; --ink:#1a1d21; --mute:#5b6472; --line:#e3e6ea;
+    --accent:#0b6ec4; --ok:#1c7d4d; --warn:#9a6700; --bad:#b3261e;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{background:#fff;border-bottom:1px solid var(--line);padding:22px 28px}
+  h1{margin:0;font-size:20px;letter-spacing:-.2px}
+  .sub{color:var(--mute);font-size:13px;margin-top:6px}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 28px 60px}
+
+  .idstrip{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:1px;
+           background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:22px 0}
+  .idstrip div{background:#fff;padding:11px 13px}
+  .idstrip .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.7px;color:var(--mute)}
+  .idstrip .v{font-family:var(--mono);font-size:12.5px;margin-top:3px;word-break:break-all}
+
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:26px 0 0}
+  .tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:11px 16px;
+               font-size:14px;font-weight:600;color:var(--mute);cursor:pointer}
+  .tabs button[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent)}
+  .pane{display:none;padding-top:26px}
+  .pane.on{display:block}
+
+  .step{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:0 0 22px;overflow:hidden}
+  .step>h2{margin:0;padding:15px 20px;font-size:15.5px;border-bottom:1px solid var(--line);background:#fbfcfd}
+  .step>h2 .n{display:inline-block;background:var(--accent);color:#fff;border-radius:5px;
+              padding:1px 8px;font-size:12px;margin-right:9px;font-family:var(--mono)}
+  .step .body{padding:18px 20px}
+  h3{font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--mute);margin:24px 0 10px}
+  h3:first-child{margin-top:0}
+
+  table{border-collapse:collapse;width:100%;font-size:13px;margin:6px 0 4px}
+  th,td{border:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#f8f9fb;font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--mute)}
+  td.mono,th.mono{font-family:var(--mono);font-size:12px;white-space:nowrap}
+  td.num{font-family:var(--mono);font-size:12px;text-align:right;white-space:nowrap}
+  tr.hot td{background:#fdf3f2}
+  tr.amber td{background:#fffaf0}
+  tr.tot td{background:#f2f4f6;font-weight:700}
+
+  pre{background:#1e2227;color:#e6e9ee;padding:13px 15px;border-radius:7px;overflow-x:auto;
+      font-family:var(--mono);font-size:12.2px;line-height:1.55;margin:8px 0}
+  code{font-family:var(--mono);font-size:12.5px;background:#eef1f4;padding:1px 5px;border-radius:4px}
+  pre code{background:none;padding:0;color:inherit;font-size:inherit}
+
+  .finding{border:1px solid var(--line);border-left:4px solid var(--bad);border-radius:7px;
+           padding:13px 16px;margin:12px 0;background:#fff}
+  .finding.warn{border-left-color:var(--warn)}
+  .finding.ok{border-left-color:var(--ok)}
+  .finding .ttl{font-weight:700;font-size:14px;margin-bottom:5px}
+  .finding .tag{font-family:var(--mono);font-size:10.5px;letter-spacing:.7px;
+                color:#fff;background:var(--bad);border-radius:4px;padding:1px 7px;margin-right:8px}
+  .finding.warn .tag{background:var(--warn)}
+  .finding.ok .tag{background:var(--ok)}
+
+  .note{background:#eef5fc;border:1px solid #cfe1f5;border-radius:7px;padding:11px 15px;
+        font-size:13px;margin:14px 0}
+  .todo{background:#fff;border:1px dashed #c4cbd4;border-radius:9px;padding:20px;
+        color:var(--mute);font-size:13.5px;text-align:center;margin-bottom:22px}
+  .mermaid{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px 12px;overflow-x:auto}
+  .mermaid svg{max-width:none !important;height:auto}
+  footer{color:var(--mute);font-size:12px;border-top:1px solid var(--line);margin-top:34px;padding-top:14px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>RCA Investigation — End-to-End Request Flow</h1>
+  <div class="sub">Agentic RCA on Amazon Bedrock AgentCore · POC environment ·
+  every figure taken from CloudWatch spans, RDS statement logs and backend application logs</div>
+</header>
+
+<div class="wrap">
+
+  <div class="idstrip">
+    <div><div class="k">Date (UTC)</div><div class="v">2026-09-21</div></div>
+    <div><div class="k">Tenant</div><div class="v">poc_account</div></div>
+    <div><div class="k">Operator</div><div class="v">e1032d7a (test-demo)</div></div>
+    <div><div class="k">Request ID</div><div class="v">fbe9e44f-efe7-4a09-8736-229321c1ac63</div></div>
+    <div><div class="k">Work trace</div><div class="v">3f2fba6215b2fa45255c3cc0a753ba6f</div></div>
+    <div><div class="k">Window</div><div class="v">11:33:46 → 11:36:17</div></div>
+    <div><div class="k">Wall time</div><div class="v">146.36 s</div></div>
+    <div><div class="k">LLM calls</div><div class="v">23</div></div>
+    <div><div class="k">Tokens</div><div class="v">322,607</div></div>
+    <div><div class="k">Cost</div><div class="v">$0.4332</div></div>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true"  onclick="tab(0,this)">Request flow — hop by hop</button>
+    <button role="tab" aria-selected="false" onclick="tab(1,this)">Sequence diagram</button>
+  </div>
+
+  <!-- ================= TAB 1 ================= -->
+  <section class="pane on">
+
+    <div class="step">
+      <h2><span class="n">STEP 1</span>Tenant selected → request accepted → handed to Supervisor</h2>
+      <div class="body">
+
+        <div class="note">
+          <strong>Scope.</strong> This step begins the moment <code>poc_account</code> is chosen in the
+          console and ends when the question has been handed to the Supervisor runtime and the browser has
+          settled into its result-fetch loop. Elapsed: <strong>11:33:46.410 → 11:33:52.117</strong>.
+          No model is invoked anywhere in this step.
+        </div>
+
+        <h3>1 · Tenant selection</h3>
+        <table>
+          <thead><tr><th class="mono">Time UTC</th><th>Call</th><th class="num">Duration</th><th>Result</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">11:33:46.410</td><td><code>POST /api/v1/accounts/poc_account/switch</code></td><td class="num">44.87 ms</td><td>200</td></tr>
+            <tr><td class="mono">11:33:46.410</td><td>└ Secrets Manager <code>GetSecretValue</code> — <code>msp-credentials/poc_account</code></td><td class="num">42.88 ms</td><td>ok</td></tr>
+          </tbody>
+        </table>
+        <p>The active tenant is now <code>poc_account</code>. It is carried forward as a plain
+        <code>account_name</code> field on the chat request — not as a token claim. The Supervisor log
+        confirms it arrived: <code>(user=e1032d7a, account=poc_account)</code>.</p>
+
+        <h3>2 · Request accepted — <code>POST /api/v1/chat</code></h3>
+        <p>One backend span tree, trace <code>611807bbf8ddf2…</code>. This is the complete fan-out before
+        any agent runs:</p>
+        <table>
+          <thead><tr><th class="mono">Time UTC</th><th>Hop</th><th>Purpose</th><th class="num">Duration</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">11:33:49.899</td><td><code>POST /api/v1/chat</code> received</td><td>entry</td><td class="num">—</td></tr>
+            <tr><td class="mono">11:33:49.933</td><td>DynamoDB <code>PutItem</code></td><td>create request + conversation record</td><td class="num">33.37 ms</td></tr>
+            <tr><td class="mono">11:33:49.958</td><td>Secrets Manager <code>GetSecretValue</code></td><td>tenant credential lookup</td><td class="num">24.18 ms</td></tr>
+            <tr><td class="mono">11:33:50.024</td><td>Secrets Manager <code>GetSecretValue</code></td><td>retry / role metadata</td><td class="num">63.27 ms</td></tr>
+            <tr class="hot"><td class="mono">11:33:50.051</td><td>STS <code>AssumeRole</code></td><td>assume tenant role → <strong>AccessDenied</strong></td><td class="num">27.15 ms</td></tr>
+            <tr><td class="mono">11:33:50.073</td><td>Secrets Manager <code>GetSecretValue</code></td><td>final credential re-read</td><td class="num">20.25 ms</td></tr>
+            <tr><td class="mono">11:33:50.080</td><td>DynamoDB <code>UpdateItem</code></td><td>status → processing</td><td class="num">5.92 ms</td></tr>
+            <tr><td class="mono">11:33:50.130</td><td>AgentCore <code>ListEvents</code></td><td><strong>short-term memory</strong> — prior turns of this session</td><td class="num">59.61 ms</td></tr>
+            <tr class="amber"><td class="mono">11:33:50.433</td><td>AgentCore <code>RetrieveMemoryRecords</code></td><td><strong>long-term memory</strong> — semantic recall, <strong>0 facts returned</strong></td><td class="num">301.76 ms</td></tr>
+            <tr><td class="mono">11:33:50.447</td><td>DynamoDB <code>UpdateItem</code> ×3</td><td>progress transitions</td><td class="num">14.49 ms</td></tr>
+            <tr class="tot"><td class="mono">11:33:50.458</td><td>202-style accept returned · <code>request_id fbe9e44f…</code></td><td>total accept path</td><td class="num">560.26 ms</td></tr>
+          </tbody>
+        </table>
+
+        <h3>3 · Memory and session checks — what each actually did</h3>
+        <table>
+          <thead><tr><th>Check</th><th>Mechanism</th><th class="num">Cost</th><th>Outcome</th></tr></thead>
+          <tbody>
+            <tr><td>Session / conversation</td><td>DynamoDB <code>PutItem</code> + 4× <code>UpdateItem</code></td><td class="num">53.9 ms</td><td>request row created, progress tracked</td></tr>
+            <tr><td>Short-term memory</td><td>AgentCore <code>ListEvents</code> on the session</td><td class="num">59.6 ms</td><td>prior turns of conversation <code>80f4b58c…</code> loaded</td></tr>
+            <tr class="amber"><td>Long-term memory</td><td>AgentCore <code>RetrieveMemoryRecords</code>, semantic <code>topK=5</code></td><td class="num">301.8 ms</td><td><strong>0 facts</strong> — no <code>LTM retrieval</code> log line emitted</td></tr>
+            <tr class="hot"><td>Tenant credentials</td><td>3× Secrets Manager + 1× STS <code>AssumeRole</code></td><td class="num">134.9 ms</td><td><strong>AccessDenied</strong> — platform credentials used instead</td></tr>
+          </tbody>
+        </table>
+        <p>Long-term memory is <strong>54% of the accept latency</strong> and returned nothing. Tenant
+        credential resolution is another 24% and also produced nothing usable. Together, roughly
+        <strong>78% of the 560 ms accept path was spent on two lookups that yielded no result.</strong></p>
+
+        <h3>4 · Hand-off to the Supervisor</h3>
+        <p>The accept returns before the work begins, so execution starts a <em>new</em> root trace:</p>
+<pre><code>11:33:50.4    InvokeAgentRuntime → Supervisor runtime
+              new trace 3f2fba6215b2fa45255c3cc0a753ba6f   (146.36 s)
+11:33:51.613  AgentCore ListEvents inside the runtime      14.00 ms
+              → the Supervisor re-reads session memory for itself</code></pre>
+        <p>Because the HTTP handler has already responded, W3C trace context does not cross this boundary.
+        The accept trace (<code>611807bbf8ddf2…</code>) and the work trace
+        (<code>3f2fba62…</code>) can only be joined on the AgentCore session id. Inside the runtimes
+        propagation is correct — all 23 LLM spans share the work trace.</p>
+        <p>Note the duplicated read: the backend loads session memory during accept
+        (<code>ListEvents</code>, 59.61 ms) and the Supervisor loads it again 1.2 s later
+        (<code>ListEvents</code>, 14.00 ms).</p>
+
+        <h3>5 · How the browser collects the answer</h3>
+        <table>
+          <thead><tr><th class="mono">Time UTC</th><th>Transport</th><th>Detail</th></tr></thead>
+          <tbody>
+            <tr class="hot"><td class="mono">11:33:50.515</td><td>SSE <code>GET /chat/{id}/stream?token=…</code></td><td>401 — token supplied as query parameter, rejected; streaming unavailable</td></tr>
+            <tr><td class="mono">11:33:52.117</td><td>long-poll begins</td><td><code>GET /chat/{id}?event_index=n</code>, each backed by one DynamoDB <code>GetItem</code> (40.6 ms first, ~4–6 ms after)</td></tr>
+            <tr><td class="mono">→ 11:36:19.471</td><td>87 polls at ~1.7 s</td><td>answer delivered on the final poll</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Findings</h3>
+
+        <div class="finding">
+          <div class="ttl"><span class="tag">1.1</span>Tenant credentials unavailable — platform credentials substituted silently</div>
+<pre><code>AccessDenied: User: arn:aws:sts::001961766007:assumed-role/poc-backend-task-role/…
+  is not authorized to perform: sts:AssumeRole
+  on resource: arn:aws:iam::021448121605:role/MSP-poc_account-Role</code></pre>
+          The failure happens inline in the accept path (27.15 ms) and is downgraded to a warning. The
+          request proceeds with the platform's own credentials, so later live-infrastructure checks query
+          account <code>001961766007</code> rather than the tenant. The resulting report states
+          “ECS tasks 2/2 running” and “Last deployment 3+ days ago” — which describe
+          <code>poc-backend-service</code> in the platform account and the AgentCore runtimes last updated
+          2026-09-18. Nothing in the UI signals the substitution.
+        </div>
+
+        <div class="finding ok">
+          <div class="ttl"><span class="tag">1.2</span>Telemetry scoping held — 32 of 32 queries tenant-filtered</div>
+          Every agent-authored SQL statement captured in the RDS statement log carried
+          <code>tenant_id = 'poc_account'</code> — 32 of 32, zero unscoped. Enforcement is still only a
+          prompt instruction with no database-level guarantee (no row-level security, no per-tenant DB
+          role), so the control remains architecturally weak; but selecting the tenant did produce correct
+          scoping on the telemetry path.
+        </div>
+
+        <div class="finding warn">
+          <div class="ttl"><span class="tag">1.3</span>Long-term memory is the largest accept cost and returned nothing</div>
+          <code>RetrieveMemoryRecords</code> took 301.76 ms — 54% of the 560 ms accept path — and returned
+          zero facts, confirmed by the absence of the <code>LTM retrieval: N facts</code> log line. The
+          lookup runs unconditionally on every request. Combined with the failed credential resolution,
+          about 78% of the accept path produced no usable result.
+        </div>
+
+        <div class="finding">
+          <div class="ttl"><span class="tag">1.4</span>The single-agent fast path is unavailable, forcing the full fan-out</div>
+          The handler first attempts a direct investigator invocation for RCA-shaped questions. It raises
+          <code>NameError: boto3 is not defined</code> — <code>routes.py:623</code> calls
+          <code>boto3.client(…)</code> while <code>boto3</code> is only ever imported locally inside other
+          functions — and a broad <code>except Exception</code> reduces it to a warning. Every RCA request
+          therefore takes the three-runtime Supervisor path. Measured investigator-only share of this run
+          is 65.35 s and roughly $0.24, against 146.36 s and $0.4332 actually spent.
+        </div>
+
+        <div class="finding warn">
+          <div class="ttl"><span class="tag">1.5</span>Identity is weaker than the multi-tenant model requires</div>
+          The API is authorised with a Cognito <strong>ID token</strong> (<code>token_use = id</code>),
+          which carries no <code>scope</code>, so there is no authorisation surface beyond “authenticated”.
+          The token contains <strong>no tenant claim</strong> — tenant identity travels as a request body
+          field that the server does not validate against the user. The AgentCore runtimes have
+          <code>authorizerConfiguration: null</code>, so the only auth boundary is at the load balancer.
+          Separately, because the SSE token is a query parameter, the full signed JWT is written to the
+          backend access log in cleartext on every request.
+        </div>
+
+        <h3>Step 1 scorecard</h3>
+        <table>
+          <tbody>
+            <tr><th>Accept path latency</th><td class="mono">560.26 ms</td></tr>
+            <tr><th>— of which long-term memory</th><td class="mono">301.76 ms (54%), 0 facts</td></tr>
+            <tr><th>— of which credential resolution</th><td class="mono">134.9 ms (24%), AccessDenied</td></tr>
+            <tr><th>LLM cost contributed</th><td class="mono">$0.00 — no model invoked</td></tr>
+            <tr><th>Tenant carried</th><td class="mono">poc_account (body field, not a token claim)</td></tr>
+            <tr><th>Telemetry scoping</th><td class="mono">correct — 32/32 queries filtered</td></tr>
+            <tr><th>Live-AWS identity</th><td class="mono">platform account, not tenant</td></tr>
+            <tr><th>Result transport</th><td class="mono">SSE unavailable → 87 long-polls</td></tr>
+          </tbody>
+        </table>
+
+      </div>
+    </div>
+
+    <div class="step">
+      <h2><span class="n">STEP 2</span>Supervisor admission → memory read → routing decision</h2>
+      <div class="body">
+
+        <div class="note">
+          <strong>Scope.</strong> From the moment the backend calls <code>InvokeAgentRuntime</code> to the
+          moment the Supervisor delegates to a specialist.
+          <strong>11:33:50.456 → 11:33:59.533 · 9.08 s · 1 LLM call · $0.0103.</strong>
+        </div>
+
+        <h3>1 · Admission and agent construction</h3>
+        <table>
+          <thead><tr><th class="mono">Time UTC</th><th>Event</th><th class="num">Duration</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">11:33:50.456</td><td><code>InvokeAgentRuntime</code> begins (backend → AgentCore)</td><td class="num">—</td></tr>
+            <tr><td class="mono">11:33:50.603</td><td><code>GET /ping</code> — container health probe</td><td class="num">200</td></tr>
+            <tr class="amber"><td class="mono">11:33:51.515</td><td><code>WARNING: Invalid HTTP request received</code></td><td class="num">—</td></tr>
+            <tr><td class="mono">11:33:51.517</td><td><code>POST /invocations</code> reaches the container</td><td class="num">admission gap <strong>1.06 s</strong></td></tr>
+            <tr><td class="mono">11:33:51.518</td><td>payload parsed — <code>(user=e1032d7a, account=poc_account)</code></td><td class="num">—</td></tr>
+            <tr><td class="mono">11:33:51.528</td><td>credentials resolved from <code>execution_role</code></td><td class="num">10 ms</td></tr>
+            <tr><td class="mono">11:33:51.613</td><td>AgentCore <code>ListEvents</code> — session memory</td><td class="num">14.00 ms</td></tr>
+            <tr><td class="mono">11:33:51.652</td><td>LangGraph agent built — <code>tools=7</code>, Sonnet 4.5</td><td class="num">134 ms</td></tr>
+            <tr class="amber"><td class="mono">11:33:56.8–57.4</td><td>a <strong>second container cold-starts</strong> (Uvicorn boot, scale-out)</td><td class="num">~600 ms</td></tr>
+          </tbody>
+        </table>
+
+        <h3>2 · The routing decision</h3>
+        <table>
+          <thead><tr><th>Attribute</th><th class="mono">Value</th></tr></thead>
+          <tbody>
+            <tr><td>Model</td><td class="mono">global.anthropic.claude-sonnet-4-5-20250929-v1:0</td></tr>
+            <tr><td>Settings</td><td class="mono">temperature 0 · max_tokens 4096 · retry_attempts 0</td></tr>
+            <tr><td>Input tokens</td><td class="mono">1,971 — system prompt ~790 (3,162 chars) + 7 tool schemas + user message</td></tr>
+            <tr><td>Output tokens</td><td class="mono">295</td></tr>
+            <tr><td>Latency</td><td class="mono">7.35 s</td></tr>
+            <tr><td>Finish reason</td><td class="mono">tool_use</td></tr>
+            <tr><td>Decision</td><td class="mono">investigate_scenario → investigator runtime invoked 11:33:59.533</td></tr>
+            <tr class="tot"><td>Cost of this step</td><td class="mono">$0.0103</td></tr>
+          </tbody>
+        </table>
+        <p>The 7 tool schemas are re-sent on every Supervisor turn, so this input cost recurs at each
+        orchestration step rather than being paid once.</p>
+
+        <h3>3 · How memory is addressed</h3>
+        <table>
+          <thead><tr><th>Scope</th><th>Key used</th><th>Contains tenant?</th></tr></thead>
+          <tbody>
+            <tr class="hot"><td>Short-term (session)</td><td class="mono">msp-&lt;cognito_sub&gt;-&lt;conversation_id&gt;</td><td><strong>no</strong></td></tr>
+            <tr class="hot"><td>Long-term (namespace)</td><td class="mono">/strategy/&lt;strategy_id&gt;/actor/&lt;cognito_sub&gt;/</td><td><strong>no</strong></td></tr>
+          </tbody>
+        </table>
+        <p>Observed in the span: <code>session.id =
+        msp-e1032d7a-f0d1-700d-9878-370a72dffd84-80f4b58c-6525-418e-bd57-d6c4aec26fa6</code> — user
+        subject followed by conversation id.</p>
+
+        <h3>Findings</h3>
+
+        <div class="finding">
+          <div class="ttl"><span class="tag">2.1</span>Memory has no tenant dimension</div>
+<pre><code>session_id = f"msp-{user_id}-{request.conversation_id}"
+namespace  = f"/strategy/{_LTM_STRATEGY_ID}/actor/{user_id}/"</code></pre>
+          Both short-term and long-term memory are keyed on user and conversation only. If an operator
+          investigates one tenant and then switches the dropdown to another within the same conversation,
+          the first tenant's findings remain in session memory and are supplied to the model, and long-term
+          facts derived from the first tenant's telemetry stay retrievable while working on the second.
+          This is a separate isolation surface from the database path — scoping SQL by
+          <code>tenant_id</code> does nothing to scope memory.
+        </div>
+
+        <div class="finding">
+          <div class="ttl"><span class="tag">2.2</span>The running model contradicts the deployment script</div>
+          <code>deploy.sh:1639</code> passes
+          <code>--env MODEL_ID=${MODEL:-…claude-haiku-4-5…}</code>, yet the runtime logs
+          <code>model=global.anthropic.claude-sonnet-4-5-20250929-v1:0</code> — the hard-coded default at
+          <code>supervisor_runtime.py:33</code>. The environment variable never took effect, matching
+          <code>get-agent-runtime</code> reporting no <code>MODEL_ID</code> at all. Sonnet is 3× Haiku in
+          both directions: the Supervisor's 3 calls in this run (13,604 in / 3,458 out) cost
+          <strong>$0.0927</strong> against <strong>$0.0309</strong> on Haiku — roughly 21% of total run
+          spend, for orchestration only.
+        </div>
+
+        <div class="finding warn">
+          <div class="ttl"><span class="tag">2.3</span>Orchestration overhead is re-paid every turn</div>
+          1,971 input tokens and 7.35 s to select a single tool. The system prompt is ~790 tokens; the
+          balance is the full 7-tool schema set plus the user message, retransmitted on each Supervisor
+          turn regardless of which tools are plausible for the request.
+        </div>
+
+        <div class="finding warn">
+          <div class="ttl"><span class="tag">2.4</span>The agent graph is rebuilt on every new container</div>
+          <code>_graph</code> is a module-global, so each instance pays 134 ms to construct the LangGraph
+          agent. A second container cold-started mid-request at 11:33:57, so with AgentCore scale-out this
+          cost recurs rather than amortising.
+        </div>
+
+        <div class="finding warn">
+          <div class="ttl"><span class="tag">2.5</span>Tenant authorisation is never checked</div>
+          <code>poc_account</code> arrives as a request body field, is logged, and is passed straight to
+          the specialist. At no point does the Supervisor verify that this operator is entitled to that
+          tenant — there is no claim to compare against and no server-side entitlement lookup.
+        </div>
+
+        <h3>Step 2 scorecard</h3>
+        <table>
+          <tbody>
+            <tr><th>Elapsed</th><td class="mono">9.08 s</td></tr>
+            <tr><th>— admission gap</th><td class="mono">1.06 s</td></tr>
+            <tr><th>— agent construction</th><td class="mono">134 ms</td></tr>
+            <tr><th>— routing inference</th><td class="mono">7.35 s</td></tr>
+            <tr><th>LLM calls</th><td class="mono">1 (Sonnet 4.5)</td></tr>
+            <tr><th>Tokens</th><td class="mono">1,971 in / 295 out</td></tr>
+            <tr><th>Cost</th><td class="mono">$0.0103</td></tr>
+            <tr><th>Decision</th><td class="mono">investigate_scenario</td></tr>
+            <tr><th>Memory tenant-scoped</th><td class="mono">no</td></tr>
+            <tr><th>Tenant entitlement verified</th><td class="mono">no</td></tr>
+          </tbody>
+        </table>
+
+      </div>
+    </div>
+
+    <div class="step">
+      <h2><span class="n">STEP 3</span>Investigator — reflection, ReAct loop over tenant telemetry, final report</h2>
+      <div class="body">
+
+        <div class="note">
+          <strong>Scope.</strong> From the Supervisor's <code>investigate_scenario</code> delegation to the
+          investigator returning its report.
+          <strong>11:33:59.533 → 11:35:04.881 · 65.35 s · 16 Haiku 4.5 calls · $0.3126</strong> —
+          72% of the run's total cost and 45% of its wall time.
+        </div>
+
+        <h3>1 · Where the time goes</h3>
+        <table>
+          <tbody>
+            <tr><th><code>POST /invocations</code> span</th><td class="num">65.35 s</td><td>100%</td></tr>
+            <tr><th>— model inference</th><td class="num">64.82 s</td><td>99%</td></tr>
+            <tr><th>— schema reflection + SQL execution</th><td class="num">0.53 s</td><td>1%</td></tr>
+          </tbody>
+        </table>
+        <p>Eleven analytical queries plus seventeen reflection statements cost roughly half a second in
+        total. The telemetry database is not a factor in this step's latency.</p>
+
+        <h3>2 · The ReAct loop</h3>
+        <table>
+          <thead><tr><th class="mono">#</th><th class="mono">Start UTC</th><th class="num">Dur</th><th class="num">In</th><th class="num">Out</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">1</td><td class="mono">11:33:59.879</td><td class="num">2.22 s</td><td class="num">3,165</td><td class="num">84</td><td><code>sql_db_list_tables</code> — discovery</td></tr>
+            <tr><td class="mono">2</td><td class="mono">11:34:02.102</td><td class="num">1.36 s</td><td class="num">3,275</td><td class="num">91</td><td><code>sql_db_schema</code> — column types, sample rows</td></tr>
+            <tr><td class="mono">3–6</td><td class="mono">11:34:03 → 11:34:09</td><td class="num">8.8 s</td><td class="num">4,318 → 10,763</td><td class="num">823</td><td>first four analytical queries</td></tr>
+            <tr class="amber"><td class="mono">7</td><td class="mono">11:34:12.321</td><td class="num">1.37 s</td><td class="num">314</td><td class="num">186</td><td><strong>query-checker</strong> — separate LLM round trip, <code>end_turn</code></td></tr>
+            <tr><td class="mono">8–15</td><td class="mono">11:34:13 → 11:34:34</td><td class="num">24.5 s</td><td class="num">11,222 → 33,457</td><td class="num">1,926</td><td>remaining seven queries</td></tr>
+            <tr class="hot"><td class="mono">16</td><td class="mono">11:34:38.339</td><td class="num"><strong>26.54 s</strong></td><td class="num">35,148</td><td class="num"><strong>2,902</strong></td><td><strong>final report synthesis</strong></td></tr>
+            <tr class="tot"><td class="mono">16 calls</td><td class="mono">65.35 s span</td><td class="num">64.82 s</td><td class="num">282,568</td><td class="num">6,012</td><td>$0.3126</td></tr>
+          </tbody>
+        </table>
+        <p>Input context grows <strong>3,165 → 35,148 tokens (11.1×)</strong> because the full message
+        history — including every SQL result set — is retransmitted on each turn.</p>
+
+        <h3>3 · Investigation path — verbatim from the RDS statement log</h3>
+<pre><code>11:34:05  MIN(ts), MAX(ts), COUNT(*)                        establish time bounds
+11:34:07  metric_name, COUNT, AVG, MIN, MAX  GROUP BY        metric inventory
+11:34:09  checkout_success_rate by device/payment/region      locate the symptom
+11:34:15  DATE_TRUNC('minute') by the same dimensions         pin the onset time
+11:34:19  otel_logs by region / pod / service                 corroborate in logs
+11:34:22  otel_spans by service_name, span_name               find the slow service
+11:34:25  spans grouped by device / payment / region          confirm blast radius
+11:34:28  spans grouped again, narrower                       narrow further
+11:34:31  raw span attributes, checkout-service               inspect the payload
+11:34:34  dns_query_latency / kernel_rx_queue metrics         reach the deep signal
+11:34:38  otel_logs WHERE stream|message ~ deploy|change      find the change event</code></pre>
+        <p>Every one of the eleven carried <code>tenant_id = 'poc_account'</code>. A representative
+        statement as captured by PostgreSQL:</p>
+<pre><code>SELECT ts, value, labels-&gt;&gt;'region' AS region, labels-&gt;&gt;'node_pool' AS node_pool
+FROM otel_metrics
+WHERE tenant_id = 'poc_account'
+  AND metric_name = 'irq_affinity_numa_mismatch'
+  AND ts &gt;= '2026-09-21 10:24:00+00:00' ...</code></pre>
+
+        <h3>Findings</h3>
+
+        <div class="finding">
+          <div class="ttl"><span class="tag">3.1</span>Cost is dominated by re-reading prior results, not by querying</div>
+          282,568 input tokens were consumed to issue 11 queries. LangGraph resends the entire message
+          history each turn, so every SQL result is paid for repeatedly — by turn 16 the model re-reads
+          roughly 35k tokens of accumulated output in order to decide one further query. This single step
+          is 72% of the run's spend, and almost all of it is retransmitted context rather than new
+          information.
+        </div>
+
+        <div class="finding ok">
+          <div class="ttl"><span class="tag">3.2</span>Tenant scoping verified in full</div>
+          Eleven of eleven agent-authored queries filtered on <code>tenant_id = 'poc_account'</code>, as
+          recorded independently by PostgreSQL rather than inferred from the prompt. Enforcement remains
+          prompt-based with no database-level guarantee — no row-level security and no per-tenant database
+          role — but compliance in this run was total. This is the evidence behind Finding 1.2.
+        </div>
+
+        <div class="finding warn">
+          <div class="ttl"><span class="tag">3.3</span>The telemetry database is not a bottleneck</div>
+          0.53 s of 65.35 s. Latency work belongs on the inference side — reducing turn count and context
+          size — not on query tuning or indexing. Optimising SQL here would recover under one percent.
+        </div>
+
+        <div class="finding warn">
+          <div class="ttl"><span class="tag">3.4</span>Schema reflection repeats on every container</div>
+          Fourteen <code>pg_catalog</code> statements plus three sample-row reads execute before any
+          reasoning begins. <code>_graph_cache</code> is keyed per process, so each new instance pays the
+          reflection cost again instead of reusing a cached schema.
+        </div>
+
+        <div class="finding warn">
+          <div class="ttl"><span class="tag">3.5</span>Final synthesis is one long call near its output ceiling</div>
+          Call 16 ran 26.54 s — 41% of the investigator's wall time — and emitted 2,902 output tokens
+          against a <code>max_tokens</code> of 4,096, i.e. 71% of the available budget. A longer or more
+          detailed report has little headroom before it is truncated mid-generation.
+        </div>
+
+        <h3>Step 3 scorecard</h3>
+        <table>
+          <tbody>
+            <tr><th>Elapsed</th><td class="mono">65.35 s (45% of run)</td></tr>
+            <tr><th>LLM calls</th><td class="mono">16 (Haiku 4.5) — 14 ReAct turns + 1 query-checker + 1 synthesis</td></tr>
+            <tr><th>Tokens</th><td class="mono">282,568 in / 6,012 out</td></tr>
+            <tr><th>Cost</th><td class="mono">$0.3126 (72% of run)</td></tr>
+            <tr><th>Context growth</th><td class="mono">3,165 → 35,148 (11.1×)</td></tr>
+            <tr><th>Analytical queries</th><td class="mono">11 — all tenant-scoped</td></tr>
+            <tr><th>Reflection statements</th><td class="mono">17, before any reasoning</td></tr>
+            <tr><th>DB share of latency</th><td class="mono">0.8%</td></tr>
+          </tbody>
+        </table>
+
+        <div class="note">
+          <strong>Not verified.</strong> The code passes
+          <code>-c default_transaction_read_only=on</code> through <code>connect_args</code>. That is a
+          connection startup parameter, so it never appears in the statement log — the setting is present
+          in source, but its effect could not be confirmed from telemetry.
+        </div>
+
+      </div>
+    </div>
+
+    <div class="step">
+      <h2><span class="n">STEP 4</span>CloudWatch specialist → live checks → final synthesis</h2>
+      <div class="body">
+
+        <div class="note">
+          <strong>Scope.</strong> From the investigator returning its report to the Supervisor emitting the
+          final answer.
+          <strong>11:35:04.881 → 11:36:16.802 · 71.9 s · 6 LLM calls · $0.1102</strong> — 25% of run cost.
+        </div>
+
+        <h3>1 · Call sequence</h3>
+        <table>
+          <thead><tr><th class="mono">Start UTC</th><th>Agent</th><th class="mono">Model</th><th class="num">Dur</th><th class="num">In</th><th class="num">Out</th><th class="num">Cost</th><th>Finish</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">11:35:04.898</td><td>supervisor</td><td class="mono">sonnet 4.5</td><td class="num">4.73 s</td><td class="num">5,177</td><td class="num">176</td><td class="num">$0.0182</td><td><code>tool_use</code> → check_cloudwatch</td></tr>
+            <tr><td class="mono">11:35:10.081</td><td>cloudwatch</td><td class="mono">haiku 4.5</td><td class="num">2.53 s</td><td class="num">1,056</td><td class="num">424</td><td class="num">$0.0032</td><td><code>tool_use</code></td></tr>
+            <tr><td class="mono">11:35:13.200</td><td>cloudwatch</td><td class="mono">haiku 4.5</td><td class="num">3.02 s</td><td class="num">2,023</td><td class="num">522</td><td class="num">$0.0046</td><td><code>tool_use</code></td></tr>
+            <tr><td class="mono">11:35:16.763</td><td>cloudwatch</td><td class="mono">haiku 4.5</td><td class="num">3.53 s</td><td class="num">4,218</td><td class="num">688</td><td class="num">$0.0077</td><td><code>tool_use</code></td></tr>
+            <tr><td class="mono">11:35:20.844</td><td>cloudwatch</td><td class="mono">haiku 4.5</td><td class="num">12.29 s</td><td class="num">6,939</td><td class="num">1,095</td><td class="num">$0.0124</td><td><code>end_turn</code></td></tr>
+            <tr class="hot"><td class="mono">11:35:33.157</td><td>supervisor</td><td class="mono">sonnet 4.5</td><td class="num"><strong>43.49 s</strong></td><td class="num">6,456</td><td class="num"><strong>2,987</strong></td><td class="num"><strong>$0.0642</strong></td><td><code>end_turn</code> — final report</td></tr>
+            <tr class="tot"><td class="mono">71.9 s</td><td>6 calls</td><td class="mono">2 sonnet / 4 haiku</td><td class="num">69.6 s</td><td class="num">25,869</td><td class="num">5,892</td><td class="num">$0.1102</td><td>—</td></tr>
+          </tbody>
+        </table>
+        <p>The specialist's own runtime span is 23.15 s (11:35:09.990 → 11:35:33.141).</p>
+
+        <h3>2 · AWS APIs the specialist called</h3>
+        <table>
+          <thead><tr><th>API</th><th class="num">Calls</th><th class="num">Latency each</th></tr></thead>
+          <tbody>
+            <tr class="amber"><td>Secrets Manager <code>GetSecretValue</code></td><td class="num">11</td><td class="num">40–75 ms</td></tr>
+            <tr><td>CloudWatch <code>DescribeAlarms</code></td><td class="num">2</td><td class="num">53–64 ms</td></tr>
+            <tr><td>CloudWatch <code>GetMetricStatistics</code></td><td class="num">5</td><td class="num">27–70 ms</td></tr>
+            <tr><td>EC2 <code>DescribeInstances</code></td><td class="num">1</td><td class="num">133 ms</td></tr>
+            <tr><td>ECS <code>DescribeServices</code></td><td class="num">1</td><td class="num">117 ms</td></tr>
+          </tbody>
+        </table>
+
+        <h3>3 · Which account was actually queried</h3>
+<pre><code>11:35:09.992  cloudwatch invoked: Check current status for checkout and payment serv… (account=poc_account)
+11:35:10.000  Using tenant-scoped boto3 tools for poc_account
+11:35:12.682  WARNING [aws_tools] Tenant credentials expired for poc_account, using default
+11:35:12.720  Found credentials from IAM Role: execution_role</code></pre>
+        <p>The tenant reached the specialist correctly. It then announced tenant scoping, discovered the
+        credentials were unusable, and fell back to <code>execution_role</code> — the platform account
+        <code>001961766007</code>. The fallback warning fires <strong>22 times</strong> in this single
+        step, once per tool invocation.</p>
+
+        <h3>4 · How that reached the delivered report</h3>
+        <table>
+          <thead><tr><th>Report statement</th><th>What it actually describes</th></tr></thead>
+          <tbody>
+            <tr class="hot"><td>“Services stable: ECS tasks 2/2 running”</td><td><code>poc-backend-service</code> on <code>poc-cluster</code> in account <code>001961766007</code></td></tr>
+            <tr class="hot"><td>“No recent changes: last deployment 3+ days ago”</td><td>the AgentCore runtimes, last updated 2026-09-18</td></tr>
+            <tr class="hot"><td>“CPU normal”</td><td>the platform's own compute</td></tr>
+            <tr class="hot"><td>“Limited observability: no checkout / payment / DNS metrics in CloudWatch”</td><td>an empty result from the wrong account — those signals exist in full in the tenant telemetry DB queried in Step 3</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Findings</h3>
+
+        <div class="finding">
+          <div class="ttl"><span class="tag">4.1</span>The specialist announces tenant scoping, then silently discards it</div>
+          <code>Using tenant-scoped boto3 tools for poc_account</code> is logged before credentials are
+          ever tested. The contradicting line is a <code>WARNING</code>, not an error, is never surfaced to
+          the user, and repeats 22 times without escalating. An operator reading the logs at INFO level
+          would conclude tenant isolation was working.
+        </div>
+
+        <div class="finding">
+          <div class="ttl"><span class="tag">4.2</span>Platform telemetry is presented as tenant fact</div>
+          Four statements in the delivered RCA describe account <code>001961766007</code> while being
+          attributed to the tenant. There is no marker in the output, and no confidence reduction, to
+          indicate the live-validation section was answered from the wrong account.
+        </div>
+
+        <div class="finding">
+          <div class="ttl"><span class="tag">4.3</span>Absence of data was misread as a monitoring gap</div>
+          The report concludes <em>“Limited observability: no checkout/payment/DNS metrics in
+          CloudWatch.”</em> Those metrics are missing only because the wrong account was queried — the same
+          run read them in volume from the tenant's telemetry database in Step 3. This is the most damaging
+          failure mode of the four: it yields a confident, plausible and actionable recommendation that
+          would send an engineer to instrument a service which is already fully instrumented.
+        </div>
+
+        <div class="finding warn">
+          <div class="ttl"><span class="tag">4.4</span>Credentials are re-resolved on every tool call</div>
+          11 Secrets Manager reads in 11 seconds with no caching — roughly 600 ms of avoidable latency and
+          11 chargeable API calls per specialist invocation, all returning the same unusable secret.
+        </div>
+
+        <div class="finding warn">
+          <div class="ttl"><span class="tag">4.5</span>The AgentCore Gateway was bypassed</div>
+          The specialist's spans show direct AWS SDK calls
+          (<code>aws.remote.service = AWS::CloudWatch / AWS::ECS / AWS::EC2</code>) and the gateway vended
+          log has no events for this window, whereas an earlier run in this environment produced 31
+          <code>AgentCore.Gateway.InvokeTool</code> spans. Gateway-level authorisation, tool allow-listing
+          and audit therefore did not apply to these calls. Why the path differs between runs has not been
+          established.
+        </div>
+
+        <div class="finding warn">
+          <div class="ttl"><span class="tag">4.6</span>Final synthesis is the single most expensive call in the run</div>
+          43.49 s and $0.0642 — 15% of total spend in one call — emitting 2,987 output tokens against the
+          4,096 ceiling, i.e. 73% of budget consumed.
+        </div>
+
+        <h3>Step 4 scorecard</h3>
+        <table>
+          <tbody>
+            <tr><th>Elapsed</th><td class="mono">71.9 s (49% of run)</td></tr>
+            <tr><th>LLM calls</th><td class="mono">6 — 2 Sonnet 4.5, 4 Haiku 4.5</td></tr>
+            <tr><th>Tokens</th><td class="mono">25,869 in / 5,892 out</td></tr>
+            <tr><th>Cost</th><td class="mono">$0.1102 (25% of run)</td></tr>
+            <tr><th>AWS API calls</th><td class="mono">20 (11 of them credential reads)</td></tr>
+            <tr><th>Account queried</th><td class="mono">001961766007 (platform), not the tenant</td></tr>
+            <tr><th>Credential fallbacks</th><td class="mono">22 warnings, none surfaced</td></tr>
+            <tr><th>Gateway mediation</th><td class="mono">none — direct SDK calls</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="step">
+      <h2><span class="n">SUMMARY</span>Cost and latency shape of the complete run</h2>
+      <div class="body">
+        <table>
+          <thead><tr><th>Step</th><th class="num">Elapsed</th><th class="num">LLM calls</th><th class="num">Tokens</th><th class="num">Cost</th><th class="num">Share</th></tr></thead>
+          <tbody>
+            <tr><td>1 · accept path</td><td class="num">0.56 s</td><td class="num">0</td><td class="num">—</td><td class="num">$0.0000</td><td class="num">0%</td></tr>
+            <tr><td>2 · routing decision</td><td class="num">9.08 s</td><td class="num">1</td><td class="num">2,266</td><td class="num">$0.0103</td><td class="num">2%</td></tr>
+            <tr><td>3 · investigator</td><td class="num">65.35 s</td><td class="num">16</td><td class="num">288,580</td><td class="num">$0.3126</td><td class="num">72%</td></tr>
+            <tr><td>4 · cloudwatch + synthesis</td><td class="num">71.9 s</td><td class="num">6</td><td class="num">31,761</td><td class="num">$0.1102</td><td class="num">25%</td></tr>
+            <tr class="tot"><td>total</td><td class="num">146.36 s</td><td class="num">23</td><td class="num">322,607</td><td class="num">$0.4332</td><td class="num">100%</td></tr>
+          </tbody>
+        </table>
+        <p>Two structural observations. Cost concentrates where context accumulates — the investigator is
+        72% of spend for 11 SQL queries, because the full transcript is retransmitted each turn. And
+        latency is almost entirely inference: across the whole run, database and AWS API work totals under
+        two seconds of the 146 s.</p>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ================= TAB 2 ================= -->
+  <section class="pane">
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    actor OP as Operator
+    participant FE as React SPA
+    participant BE as Backend ECS
+    participant DDB as DynamoDB
+    participant SEC as Secrets Mgr + STS
+    participant MEM as AgentCore Memory
+    participant SUP as Supervisor
+    participant BR as Bedrock Runtime
+    participant INV as Investigator
+    participant PG as Telemetry DB
+    participant CW as CloudWatch Agent
+    participant AWS as AWS APIs
+
+    Note over OP,INV: STEP 1 - accept path - 11:33:46 to 11:33:52 UTC
+
+    OP->>FE: select tenant poc_account
+    FE->>BE: POST /accounts/poc_account/switch
+    BE->>SEC: GetSecretValue (42.88 ms)
+    BE-->>FE: 200 - active tenant set
+
+    OP->>FE: submit RCA question
+    FE->>BE: POST /api/v1/chat (account_name=poc_account)
+    BE->>DDB: PutItem request record (33.37 ms)
+    BE->>SEC: GetSecretValue x3 (107.7 ms)
+    BE->>SEC: AssumeRole tenant role (27.15 ms)
+    SEC--xBE: AccessDenied
+    Note over BE,SEC: F1.1 platform credentials used instead
+    BE->>MEM: ListEvents short-term (59.61 ms)
+    MEM-->>BE: prior turns of session
+    BE->>MEM: RetrieveMemoryRecords long-term (301.76 ms)
+    MEM-->>BE: 0 facts
+    Note over BE,MEM: F1.3 54 pct of accept cost, no result
+    BE->>DDB: UpdateItem x4 progress (20.4 ms)
+    BE-->>BE: try direct investigator path
+    Note over BE: F1.4 NameError boto3 - falls back
+    BE-->>FE: 200 - accept total 560.26 ms
+
+    BE->>SUP: InvokeAgentRuntime - new root trace
+    Note over BE,SUP: trace context breaks at accept boundary
+
+    FE->>BE: GET /chat/id/stream - token in query
+    BE--xFE: 401 - streaming unavailable
+    loop 87 polls at 1.7 s
+        FE->>BE: GET /chat/id?event_index=n
+        BE->>DDB: GetItem
+        BE-->>FE: 200
+    end
+
+    Note over BE,INV: STEP 2 - 11:33:50.456 to 11:33:59.533 - 9.08 s - USD 0.0103
+
+    SUP-->>SUP: GET /ping health probe
+    Note over SUP: admission gap 1.06 s
+    SUP->>MEM: ListEvents session memory (14.00 ms)
+    MEM-->>SUP: prior turns
+    Note over SUP,MEM: F2.1 key is user plus conversation only
+    Note over SUP,MEM: no tenant component in memory
+    SUP-->>SUP: build agent - 7 tools (134 ms)
+    Note over SUP: F2.2 Sonnet 4.5 runs
+    Note over SUP: deploy.sh specifies Haiku - 3x price
+    SUP->>BR: Converse - in 1971 out 295 (7.35 s)
+    BR-->>SUP: finish_reason tool_use
+    Note over SUP,BR: F2.3 7 tool schemas re-sent each turn
+    SUP->>INV: investigate_scenario (11:33:59.533)
+    Note over INV: F2.5 tenant passed without entitlement check
+
+    Note over SUP,PG: STEP 3 - 11:33:59.533 to 11:35:04.881 - 65.35 s - USD 0.3126
+
+    INV->>PG: schema reflection - 14 pg_catalog + 3 sample rows
+    PG-->>INV: table and column metadata
+    Note over INV,PG: F3.4 reflection repeats on every container
+    INV->>BR: Converse - sql_db_list_tables (in 3165)
+    INV->>BR: Converse - sql_db_schema (in 3275)
+
+    loop 11 analytical queries - 11:34:05 to 11:34:38
+        INV->>BR: Converse - decide next query
+        BR-->>INV: tool_use with SQL
+        INV->>PG: SELECT ... WHERE tenant_id = poc_account
+        PG-->>INV: result rows
+    end
+    Note over INV,PG: F3.2 all 11 queries tenant-scoped
+    Note over INV,BR: F3.1 full history re-sent - context 3165 to 35148
+
+    INV->>BR: Converse - query checker (in 314)
+    BR-->>INV: validated
+    Note over INV,BR: F3.5 extra LLM round trip per checked query
+
+    INV->>BR: Converse - final report (26.54 s, out 2902)
+    BR-->>INV: RCA report
+    Note over INV: 41 pct of step in one call - 71 pct of token ceiling
+    INV-->>SUP: investigation result (11:35:04.881)
+    Note over INV,PG: F3.3 DB is 0.8 pct of step latency
+
+    Note over SUP,AWS: STEP 4 - 11:35:04.881 to 11:36:16.802 - 71.9 s - USD 0.1102
+
+    SUP->>BR: Converse - decide next step (in 5177)
+    BR-->>SUP: tool_use = check_cloudwatch
+    SUP->>CW: InvokeAgentRuntime (account=poc_account)
+    Note over CW: logs "Using tenant-scoped boto3 tools"
+
+    CW->>SEC: GetSecretValue x11 - no caching
+    SEC-->>CW: secret with expired credentials
+    Note over CW,SEC: F4.1 falls back to execution_role - 22 warnings
+    Note over CW,SEC: F4.4 credentials re-resolved per tool call
+
+    loop 4 reasoning turns - 23.15 s
+        CW->>BR: Converse - decide which API to call
+        BR-->>CW: tool_use
+        CW->>AWS: DescribeAlarms / GetMetricStatistics / DescribeServices
+        AWS-->>CW: data from PLATFORM account 001961766007
+    end
+    Note over CW,AWS: F4.2 platform telemetry returned as tenant fact
+    Note over CW,AWS: F4.5 direct SDK calls - Gateway bypassed
+    CW-->>SUP: "ECS 2/2 running, no checkout metrics found"
+    Note over CW: F4.3 empty wrong-account result read as monitoring gap
+
+    SUP->>BR: Converse - final synthesis (43.49 s, out 2987)
+    BR-->>SUP: RCA report
+    Note over SUP,BR: F4.6 most expensive single call - 15 pct of run
+    SUP-->>BE: final answer (11:36:16.802)
+    BE->>DDB: UpdateItem - result stored
+    FE->>BE: poll 87 returns the answer
+    BE-->>OP: RCA report displayed
+
+    rect rgb(240,242,245)
+    Note over OP,AWS: TOTAL - 146.36 s - 23 LLM calls - 322607 tokens - USD 0.4332
+    end
+    </div>
+  </section>
+
+  <footer>
+    Sources: CloudWatch Logs <code>aws/spans</code> and per-runtime <code>spans</code> streams ·
+    RDS <code>log_statement=all</code> capture on <code>rca-scenario-db</code> ·
+    backend task log group <code>…TaskDefbackendLogGroup15A95F50-Y2cgwpa4Ibip</code> ·
+    cost computed from measured token counts at Claude Sonnet 4.5 ($3/$15 per M) and Haiku 4.5 ($1/$5 per M),
+    reconciling to the console figure to the cent.
+  </footer>
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad:true,
+    securityLevel:'loose',
+    theme:'base',
+    themeVariables:{
+      fontFamily:'-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif',
+      fontSize:'13px',
+      primaryColor:'#eef5fc', primaryTextColor:'#1a1d21', primaryBorderColor:'#9dc2e8',
+      lineColor:'#5b6472', textColor:'#1a1d21',
+      actorBkg:'#ffffff', actorBorder:'#9dc2e8', actorTextColor:'#1a1d21', actorLineColor:'#c8cfd6',
+      signalColor:'#3d4753', signalTextColor:'#1a1d21',
+      noteBkgColor:'#fff6d9', noteTextColor:'#4a3b00', noteBorderColor:'#d9bd5e',
+      labelBoxBkgColor:'#eef1f4', labelBoxBorderColor:'#c8cfd6', labelTextColor:'#1a1d21',
+      loopTextColor:'#1a1d21',
+      sequenceNumberColor:'#ffffff',
+      activationBkgColor:'#dbe9f7', activationBorderColor:'#9dc2e8'
+    },
+    sequence:{
+      useMaxWidth:false, wrap:false,
+      actorMargin:96, boxMargin:14, noteMargin:14, messageMargin:42,
+      diagramMarginX:24, diagramMarginY:16, mirrorActors:false,
+      bottomMarginAdj:4
+    }
+  });
+  function tab(i,btn){
+    document.querySelectorAll('.pane').forEach((p,n)=>p.classList.toggle('on',n===i));
+    document.querySelectorAll('.tabs button').forEach(b=>b.setAttribute('aria-selected', b===btn));
+  }
+</script>
+</body>
+</html>

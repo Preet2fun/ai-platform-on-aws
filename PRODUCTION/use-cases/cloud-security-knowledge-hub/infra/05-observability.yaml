@@ -85,6 +85,23 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlertTopic]
 
+  IngestionQualityAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-${EnvName}-ingestion-quality"
+      AlarmDescription: >
+        Ingestion produced null embeddings or empty chunks (data-quality defect in the index).
+        Fires when null_embedding_rate exceeds 0 on any ingestion run.
+      Namespace: CSHub/Ingestion
+      MetricName: null_embedding_rate
+      Statistic: Maximum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+
   # ---------- Dashboard ----------
   Dashboard:
     Type: AWS::CloudWatch::Dashboard
@@ -124,9 +141,21 @@ Resources:
                   ["CSHub/Eval","context_recall","Config","baseline",{"stat":"Average"}]
                 ],"period":86400}},
             { "type":"metric","x":12,"y":12,"width":12,"height":6,
-              "properties":{"title":"WAF - blocked requests","region":"${AWS::Region}",
-                "metrics":[["AWS/WAFV2","BlockedRequests","WebACL","${ProjectName}-${EnvName}-api-waf","Region","${AWS::Region}",{"stat":"Sum"}]],
-                "period":300}}
+              "properties":{"title":"Ingestion quality - chunk rates","region":"${AWS::Region}",
+                "metrics":[
+                  ["CSHub/Ingestion","empty_chunk_rate",{"stat":"Average"}],
+                  ["CSHub/Ingestion","null_embedding_rate",{"stat":"Average"}],
+                  ["CSHub/Ingestion","duplicate_chunk_rate",{"stat":"Average"}],
+                  ["CSHub/Ingestion","oversized_chunk_rate",{"stat":"Average"}]
+                ],"period":86400}},
+            { "type":"metric","x":0,"y":18,"width":12,"height":6,
+              "properties":{"title":"Ingestion corpus - size & coverage","region":"${AWS::Region}",
+                "metrics":[
+                  ["CSHub/Ingestion","corpus_chunks",{"stat":"Maximum"}],
+                  ["CSHub/Ingestion","corpus_docs",{"stat":"Maximum"}],
+                  ["CSHub/Ingestion","services_covered",{"stat":"Maximum"}],
+                  ["CSHub/Ingestion","corpus_avg_chunk_chars",{"stat":"Average"}]
+                ],"period":86400}}
           ]
         }
 

@@ -27,8 +27,16 @@ Deploy a single stack manually, e.g.:
 ```bash
 aws cloudformation deploy --stack-name cshub-dev-network \
   --template-file 00-network.yaml --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides ProjectName=cshub EnvName=dev VpcCidr=10.20.0.0/16
+  --parameter-overrides ProjectName=cshub EnvName=dev VpcCidr=10.20.0.0/16 \
+  --tags project=cshub env=dev usecase=rag-prod
 ```
+
+## Tagging (required)
+Every stack is deployed with **stack-level tags** `project=cshub env=<env> usecase=rag-prod`.
+CloudFormation propagates these to every resource that supports tagging, so all Hub assets
+carry `usecase=rag-prod` for cost allocation and cleanup. Any new stack (P1+) must pass the
+same `--tags`. *(A few resource types don't receive propagated tags — e.g. EBS volumes created
+from block-device mappings — but none of those are used here.)*
 
 ## Parameters
 Edit `params/dev.json`. Key knobs:
@@ -39,15 +47,17 @@ Edit `params/dev.json`. Key knobs:
 
 ## Important build notes (before this actually runs)
 
-1. **pgvector Lambda needs a Postgres driver.** `02-pgvector-bootstrap.yaml` ships an inline
-   handler that documents the exact bootstrap SQL but does **not** connect (inline code can't
-   include `psycopg`). In CI, package the Lambda with a `psycopg`/`pg8000` layer or zip and
-   point the function at it; the DDL to run is in the template. Until then the custom resource
-   succeeds as a no-op placeholder (so the stack completes) — swap to the packaged artifact to
-   actually create the schema.
-2. **Aurora engine version.** `EngineVersion` defaults to `16.4`; confirm a version available
-   in `us-east-1` that supports Serverless v2 **and** pgvector before deploy
-   (`aws rds describe-db-engine-versions --engine aurora-postgresql`).
+1. **pgvector bootstrap now runs for real.** `02-pgvector-bootstrap.yaml` ships an inline
+   handler that installs `pg8000` (pure-Python Postgres driver — no native build, no layer,
+   no CI packaging) into `/tmp` at runtime, then connects to Aurora and executes the idempotent
+   bootstrap DDL (enable `vector`, create `documents`/`chunks`, HNSW + GIN indexes, `tsv`
+   trigger). The Lambda runs in the private subnets with NAT egress, so it can reach PyPI; the
+   Aurora SG already allows 5432 from the compute SG. Re-running (stack update) is safe.
+   *First invoke takes ~10–20s extra for the one-time pip install (timeout is 300s).*
+2. **Aurora engine version.** `EngineVersion` defaults to `16.8` (verified `available` in
+   `us-east-1`, supports Serverless v2 + pgvector). `16.4` standard is **not** offered in this
+   region (only `16.4-limitless`). Re-check with
+   `aws rds describe-db-engine-versions --engine aurora-postgresql` if you change regions.
 3. **CI/CD role is broad for bootstrap.** `06-cicd.yaml` grants `PowerUserAccess` + IAM for
    convenience. **Tighten to least-privilege** (only the services this stack set touches)
    before production, per the AI-PLATFORM guardrails standard.

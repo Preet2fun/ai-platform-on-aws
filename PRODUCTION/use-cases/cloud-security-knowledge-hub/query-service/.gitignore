@@ -1,0 +1,5 @@
+# Local packaging build output (produced by package.sh); rebuilt on demand.
+.build/
+*.zip
+__pycache__/
+*.pyc

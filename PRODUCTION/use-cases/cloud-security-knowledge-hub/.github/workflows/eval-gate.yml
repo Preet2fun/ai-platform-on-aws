@@ -1,9 +1,10 @@
 name: eval-gate
 
 # Quality gate for the Cloud Security Knowledge Hub RAG pipeline.
-# - Always runs the offline unit tests (ingestion, query-service, evals).
-# - On demand / main, runs the RAGAS eval against the golden set in a dev environment and
-#   fails the build if the quality gate fails (see evals/gate.py + thresholds.json).
+# - Always runs the offline unit tests (ingestion, query-service, evals/tests).
+# - On demand, runs the OFFLINE eval against the golden set (collect answers → Bedrock
+#   LLM-judge score → quality gate) and fails the build if the gate fails
+#   (see evals/lib/gate.py + evals/thresholds.json). This is a pre-release quality gate.
 #
 # Auth to AWS uses the GitHub OIDC deploy role from infra/06-cicd.yaml (no long-lived keys).
 
@@ -59,20 +60,27 @@ jobs:
         run: |
           pip install -r evals/requirements.txt
           pip install -r query-service/requirements.txt
-      - name: Run RAGAS eval + quality gate
+      - name: Run eval (collect from live API → LLM-judge score → gate)
         env:
-          # query-service env (dev): DB + Bedrock model ids, guardrail, etc.
-          DB_ENDPOINT: ${{ vars.CSHUB_DB_ENDPOINT }}
-          DB_NAME: cshub
-          DB_SECRET_ARN: ${{ vars.CSHUB_DB_SECRET_ARN }}
-          GENERATION_MODEL_ID: ${{ vars.CSHUB_GEN_MODEL_ID }}
-          EMBEDDING_MODEL_ID: amazon.titan-embed-text-v2:0
+          CSHUB_API_ENDPOINT: ${{ vars.CSHUB_API_ENDPOINT }}   # from 03-query-service output
+          CSHUB_ID_TOKEN: ${{ secrets.CSHUB_EVAL_ID_TOKEN }}    # short-lived Cognito id_token
+          AWS_REGION: us-east-1
         run: |
-          python evals/run_eval.py \
+          # OFFLINE eval (golden set → gate): collect answers from the deployed API, then
+          # grade against the golden set. Sourcing answers from the deployed API is just an
+          # implementation detail (Aurora is in a private VPC); this is a pre-release quality
+          # gate against curated ground truth, i.e. OFFLINE eval by the industry definition.
+          # 1) collect pipeline outputs over the golden set
+          python evals/offline/collect.py \
             --golden evals/golden/golden.jsonl \
-            --config baseline \
-            --out results/baseline.json \
-            --emit-cloudwatch
+            --api "$CSHUB_API_ENDPOINT" --token "$CSHUB_ID_TOKEN" \
+            --out results/records.jsonl
+          # 2) score accuracy with the Bedrock LLM-judge + emit to CloudWatch
+          python evals/offline/score.py \
+            --records results/records.jsonl \
+            --config baseline --out results/baseline.json --emit-cloudwatch
+          # (alternative RAGAS-library path is archived at evals/_archive/run_eval.py;
+          #  use it once running inside the VPC on py3.9+ with Aurora reachable.)
       - name: Upload eval results
         if: always()
         uses: actions/upload-artifact@v4

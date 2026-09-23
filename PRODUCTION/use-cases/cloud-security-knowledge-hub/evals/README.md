@@ -1,62 +1,132 @@
-# Evaluation (P5) — RAGAS harness + quality gate
+# Evaluation
 
-Measures the RAG pipeline against a golden set so quality is tracked continuously and each
-Phase-2 stage's impact is quantified (see `../AI-SDLC-AND-EVALS.md`).
+Measures the RAG system's quality so each change is quantified and gated (see
+`../AI-SDLC-AND-EVALS.md`).
 
-## What's here
+## Terminology (industry definitions — used consistently here)
+
+| | **Offline eval** | **Online eval** |
+|---|---|---|
+| **When** | Before release, in the AI-SDLC / CI — a quality gate | After release, continuously, on live traffic |
+| **Data** | A fixed **golden set** (curated questions + known-good answers) | **Real production queries**, sampled from logs/traces |
+| **Ground truth** | Yes (labeled expected answers) | Usually none — quality is inferred (LLM-judge on live answers, user feedback, deflection/guardrail rates) |
+| **Answers "..."** | "Is this version good enough to ship?" | "Is the shipped system still good on real, changing traffic?" |
+
+> **Not the same as operational monitoring.** CloudWatch dashboards, X-Ray, and latency/error
+> alarms tell you the system is **up and fast** — that is *observability*, not answer-quality
+> *online eval*. Online eval scores the **quality of live answers**.
+
+## What is built vs. not
+
+| Capability | Status | Where |
+|---|---|---|
+| **Offline eval** — query pipeline (golden set → 4 accuracy metrics → gate) | ✅ **Built** | `offline/` + `golden/` + `lib/gate.py` |
+| **Offline system perf** — latency captured during the golden run | ✅ Built | `offline/score.py` → `results/baseline.json` |
+| Operational monitoring — latency, errors, alarms | ✅ Built | `infra/05-observability.yaml` (ops, not quality) |
+| **Online eval** — score real production traffic | ❌ **Not built** | design in `ONLINE-EVAL-PLAN.md` |
+| **Ingestion quality eval** — chunk/embedding quality + continuous monitoring | ❌ **Not built** | placeholder in `ingestion/` |
+
+> **Important:** everything under `offline/` is **offline eval**, even though `collect.py`
+> sources answers by calling the *deployed* API. That is only an implementation detail —
+> Aurora sits in a private VPC, so the pipeline can't run on a laptop. It is still offline
+> eval: **fixed questions, labeled ground truth, a pre-release gate.**
+
+## Folder structure
+
 ```
 evals/
-├── run_eval.py        # runner: pipeline over golden set → RAGAS → aggregate → gate → report
-├── gate.py            # quality-gate logic (floors, max regression, system ceilings)
-├── report.py          # aggregation + baseline-vs-candidate delta report
-├── thresholds.json    # gate thresholds (tune once the golden set exists)
+├── thresholds.json         # gate config: metric floors, max-regression, system ceilings
 ├── requirements.txt
-├── golden/            # golden dataset (schema, seed, generator)
-│   ├── SCHEMA.md
-│   ├── seed.jsonl         # 5 hand-written examples to start
-│   └── generate_golden.py # LLM-generate CANDIDATE pairs from corpus (human review required)
-└── tests/             # offline unit tests (gate, aggregation, delta) — 7, all passing
+│
+├── lib/                    # shared, pure, unit-tested logic
+│   ├── gate.py             # pass/fail: floors + regression-vs-baseline + system ceilings
+│   └── report.py           # aggregate metrics + baseline-vs-candidate delta report
+│
+├── offline/                # OFFLINE eval (golden set → gate) — the working path
+│   ├── collect.py          # run golden Qs through the pipeline → results/records.jsonl
+│   └── score.py            # Bedrock LLM-as-judge → 4 metrics → results/baseline.json (+CloudWatch)
+│
+├── ingestion/              # INGESTION quality eval  [TODO — currently empty]
+│
+├── golden/
+│   ├── SCHEMA.md           # golden-set field schema
+│   └── golden.jsonl        # 38 human-reviewed Q&A pairs (config/attack/prevention · 16 services)
+│
+├── tests/
+│   └── test_gate_and_report.py   # 7 offline unit tests for lib/
+│
+├── results/                # run artifacts (records.jsonl gitignored; baseline.json kept)
+│   └── baseline.json       # Iteration-1 baseline scores — the number Phase-3 must beat
+│
+├── reports/
+│   └── ITERATION-1-BASELINE.md   # the human-readable baseline report
+│
+└── _archive/               # superseded, NOT run (kept for reference)
+    ├── run_eval.py         # original RAGAS-library runner (needs py3.9+ and in-VPC Aurora)
+    ├── generate_golden.py  # original Aurora-based golden generator
+    └── seed.jsonl          # original 5 starter examples
 ```
 
-## Metrics (RAGAS)
-- **faithfulness** — answer grounded in retrieved context (catches hallucination)
-- **answer_relevancy** — answer addresses the question
-- **context_precision** — retrieved context is relevant (retrieval noise)
-- **context_recall** — the right context was retrieved
-Plus system metrics: p95 latency, avg cost/query.
+*(An `ONLINE-EVAL-PLAN.md` design doc describes the not-yet-built online eval.)*
 
-## The quality gate
-`gate.py` fails a change if any metric is **below its floor**, **regresses** beyond the
-allowed delta vs the recorded baseline, or a **system ceiling** is exceeded. Wired into CI
-(`.github/workflows/eval-gate.yml`).
+## Metrics (offline)
 
-## Two-phase measurement (the point)
-Run the baseline, save `results/baseline.json`. For each Phase-2 flag (hybrid, rerank,
-query-transform, chain-of-note, crag), run again with that flag on and `--baseline
-results/baseline.json` — the delta report shows exactly what the stage contributed.
+**Accuracy (per golden question, 0–1):**
+- **faithfulness** — every claim in the answer is grounded in retrieved context (catches hallucination)
+- **answer_relevancy** — the answer addresses the question
+- **context_precision** — retrieved context is relevant (low noise)
+- **context_recall** — retrieved context covers the ground-truth answer
+
+**System:** p50 / p95 / avg latency (and cost/query once metered).
+
+## The quality gate (`lib/gate.py` + `thresholds.json`)
+
+Fails a change if any metric is **below its floor**, **regresses** beyond the allowed delta vs
+the recorded baseline, or a **system ceiling** is exceeded. Wired into CI (`.github/workflows/eval-gate.yml`).
+
+## How to run the offline eval
+
 ```bash
-python run_eval.py --golden golden/golden.jsonl --config baseline --out results/baseline.json
-# enable ENABLE_HYBRID=true in the query env, then:
-python run_eval.py --golden golden/golden.jsonl --config hybrid \
-  --out results/hybrid.json --baseline results/baseline.json
+# 1) collect pipeline outputs over the golden set (needs a Cognito id_token)
+python offline/collect.py --golden golden/golden.jsonl \
+  --api <ApiEndpoint> --token <id_token> --out results/records.jsonl
+
+# 2) score accuracy with the Bedrock LLM-judge (+ push aggregate to CloudWatch CSHub/Eval)
+AWS_PROFILE=agentcore AWS_REGION=us-east-1 \
+python offline/score.py --records results/records.jsonl \
+  --config baseline --out results/baseline.json --emit-cloudwatch
 ```
 
-## Golden dataset workflow (no labels yet)
-1. `python golden/generate_golden.py --n 60 --out golden/candidates.jsonl`
-   (LLM writes candidate Q&A from real corpus chunks).
-2. **Human-review** each candidate; fix/verify `ground_truth`, set `reviewed_by`.
-3. Append accepted lines to `golden/golden.jsonl`. Target ~100–200 reviewed pairs for v1.
-4. Grow the set over time from real user queries (mined from logs).
+Why LLM-as-judge and not the RAGAS library: the local runtime is Python 3.8 (RAGAS needs
+≥3.9). The judge computes the same four metrics on the same 0–1 scale and uses the **same judge
+across iterations**, so the baseline-vs-Phase-3 **delta** is valid. The RAGAS-library path is
+preserved in `_archive/run_eval.py` for when we run inside the VPC on py3.9+.
+
+## Two-iteration measurement (the point of offline eval)
+
+1. **Iteration 1 (baseline, Phase-3 OFF):** `results/baseline.json` + `reports/ITERATION-1-BASELINE.md`.
+2. **Iteration 2 (Phase-3 advanced RAG):** enable one stage at a time, re-run the same two
+   scripts with `--config <stage>`, and use `lib/report.py` to show the per-stage delta vs the
+   baseline. Keep a stage only if its gain justifies its latency/cost.
+
+## Golden dataset
+
+`golden/golden.jsonl` — 38 human-reviewed pairs across the three question types
+(configuration / attack / prevention) and all 16 corpus services. Schema in `golden/SCHEMA.md`.
+
+## Not yet built (roadmap)
+
+- **Ingestion quality eval + continuous monitoring** (`ingestion/`): chunk-size distribution,
+  empty/duplicate-chunk rate, embedding sanity (dim/norm/non-null), corpus coverage; emit a
+  `CSHub/Ingestion` CloudWatch namespace with a dashboard widget + alarms. Today the only
+  ingestion signal is the per-doc **integrity** check in `../ingestion/handlers/manifest.py`
+  (chunks produced · all embedded · DB count matches) — not a quality eval, no metrics emitted.
+- **Online eval** (`ONLINE-EVAL-PLAN.md`): sample live Q&A from logs, async LLM-judge on live
+  answers (no ground truth), user feedback (thumbs up/down), deflection + guardrail-block rates,
+  and quality-drift alarms → `CSHub/OnlineEval` namespace.
 
 ## Test locally (no AWS)
-```bash
-python -m pytest tests -q      # gate/report/aggregation logic (7 tests)
-```
-`run_eval.py` and `generate_golden.py` need Bedrock + Aurora at runtime (RAGAS scoring +
-corpus access); the gate/report logic is fully unit-tested offline.
 
-## Notes
-- **Not deployed / not run against live yet.** Harness + tests authored; golden set is seed-only.
-- Offline eval scores can be pushed to CloudWatch (`--emit-cloudwatch`, namespace `CSHub/Eval`)
-  so the observability dashboard tracks eval trends alongside online metrics.
-- Tune `thresholds.json` once you have a real baseline; the current values are sensible starts.
+```bash
+python -m pytest tests -q      # 7 tests for lib/gate.py + lib/report.py
+```

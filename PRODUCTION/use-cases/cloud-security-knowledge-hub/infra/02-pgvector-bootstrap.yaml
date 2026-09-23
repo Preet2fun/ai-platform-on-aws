@@ -45,8 +45,8 @@ Resources:
       FunctionName: !Sub "${ProjectName}-${EnvName}-pgvector-bootstrap"
       Runtime: python3.12
       Handler: index.handler
-      Timeout: 120
-      MemorySize: 256
+      Timeout: 300
+      MemorySize: 512
       Role: !GetAtt BootstrapLambdaRole.Arn
       VpcConfig:
         SecurityGroupIds:
@@ -66,56 +66,107 @@ Resources:
             Fn::Sub: "${ProjectName}-${EnvName}-DbName"
           EMBEDDING_DIM: !Ref EmbeddingDim
       Code:
-        # NOTE: this inline handler uses only the stdlib for CFN response handling, but it
-        # needs a Postgres driver (pg8266/psycopg) available at runtime. For the real deploy
-        # this Lambda is packaged with a psycopg (or pg8000) layer/zip via CI. The inline
-        # code documents the exact bootstrap SQL; swap to the packaged artifact in CI.
+        # This inline handler installs pg8000 (pure-Python Postgres driver, no native build)
+        # into /tmp at runtime, then connects to Aurora and runs the idempotent bootstrap DDL.
+        # The Lambda runs in the private subnets with NAT egress, so it can reach PyPI.
+        # No CI packaging, layer, or S3 artifact needed — the whole thing deploys via deploy.sh.
+        # Statements use IF NOT EXISTS / OR REPLACE so re-running (stack update) is safe.
         ZipFile: |
-          import json, os, urllib.request
+          import json, os, sys, subprocess, urllib.request
 
-          DDL = """
-          CREATE EXTENSION IF NOT EXISTS vector;
+          # --- Bootstrap the Postgres driver into /tmp on first invocation ---
+          # (Lambda's package dir is read-only; /tmp is writable.) We install FIRST, then add
+          # the target dir to sys.path and invalidate import caches so the fresh install is
+          # importable in the same process. pip runs via subprocess (available in the Lambda
+          # python image); the Lambda has NAT egress to reach PyPI.
+          import importlib
+          _VENDOR = "/tmp/vendor"
+          def _ensure_pg8000():
+              try:
+                  if _VENDOR not in sys.path:
+                      sys.path.insert(0, _VENDOR)
+                  importlib.invalidate_caches()
+                  import pg8000  # noqa: F401
+                  return pg8000
+              except ImportError:
+                  pass
+              subprocess.check_call([
+                  sys.executable, "-m", "pip", "install",
+                  "--no-cache-dir", "--target", _VENDOR, "pg8000==1.31.2"
+              ])
+              if _VENDOR not in sys.path:
+                  sys.path.insert(0, _VENDOR)
+              importlib.invalidate_caches()      # critical: re-scan sys.path after install
+              import pg8000  # noqa: F401
+              return pg8000
 
-          CREATE TABLE IF NOT EXISTS documents (
-            doc_id        TEXT PRIMARY KEY,
-            source        TEXT,
-            title         TEXT,
-            service       TEXT,
-            topic         TEXT,
-            version       TEXT,
-            sensitivity   TEXT,
-            created_at    TIMESTAMPTZ DEFAULT now()
-          );
+          DDL_STATEMENTS = [
+              "CREATE EXTENSION IF NOT EXISTS vector;",
+              """
+              CREATE TABLE IF NOT EXISTS documents (
+                doc_id        TEXT PRIMARY KEY,
+                source        TEXT,
+                title         TEXT,
+                service       TEXT,
+                topic         TEXT,
+                version       TEXT,
+                sensitivity   TEXT,
+                created_at    TIMESTAMPTZ DEFAULT now()
+              );
+              """,
+              # NOTE: %(dim)s is substituted in Python before execution (not a SQL param).
+              """
+              CREATE TABLE IF NOT EXISTS chunks (
+                chunk_id      TEXT PRIMARY KEY,
+                doc_id        TEXT REFERENCES documents(doc_id) ON DELETE CASCADE,
+                chunk_text    TEXT NOT NULL,
+                embedding     vector(%(dim)s),
+                tsv           tsvector,
+                metadata      JSONB,
+                created_at    TIMESTAMPTZ DEFAULT now()
+              );
+              """,
+              "CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw ON chunks USING hnsw (embedding vector_cosine_ops);",
+              "CREATE INDEX IF NOT EXISTS chunks_tsv_gin ON chunks USING gin (tsv);",
+              """
+              CREATE OR REPLACE FUNCTION chunks_tsv_update() RETURNS trigger AS $$
+              BEGIN
+                NEW.tsv := to_tsvector('english', COALESCE(NEW.chunk_text, ''));
+                RETURN NEW;
+              END; $$ LANGUAGE plpgsql;
+              """,
+              "DROP TRIGGER IF EXISTS trg_chunks_tsv ON chunks;",
+              """
+              CREATE TRIGGER trg_chunks_tsv BEFORE INSERT OR UPDATE ON chunks
+                FOR EACH ROW EXECUTE FUNCTION chunks_tsv_update();
+              """,
+          ]
 
-          CREATE TABLE IF NOT EXISTS chunks (
-            chunk_id      TEXT PRIMARY KEY,
-            doc_id        TEXT REFERENCES documents(doc_id) ON DELETE CASCADE,
-            chunk_text    TEXT NOT NULL,
-            embedding     vector(%(dim)s),                         -- dense (pgvector)
-            tsv           tsvector,                                -- sparse (full-text)
-            metadata      JSONB,
-            created_at    TIMESTAMPTZ DEFAULT now()
-          );
-
-          -- dense ANN index (cosine). Use HNSW for good recall/latency.
-          CREATE INDEX IF NOT EXISTS chunks_embedding_hnsw
-            ON chunks USING hnsw (embedding vector_cosine_ops);
-
-          -- sparse full-text index
-          CREATE INDEX IF NOT EXISTS chunks_tsv_gin
-            ON chunks USING gin (tsv);
-
-          -- keep tsv in sync with chunk_text
-          CREATE OR REPLACE FUNCTION chunks_tsv_update() RETURNS trigger AS $$
-          BEGIN
-            NEW.tsv := to_tsvector('english', COALESCE(NEW.chunk_text, ''));
-            RETURN NEW;
-          END; $$ LANGUAGE plpgsql;
-
-          DROP TRIGGER IF EXISTS trg_chunks_tsv ON chunks;
-          CREATE TRIGGER trg_chunks_tsv BEFORE INSERT OR UPDATE ON chunks
-            FOR EACH ROW EXECUTE FUNCTION chunks_tsv_update();
-          """
+          def _run_ddl():
+              import boto3
+              pg8000 = _ensure_pg8000()
+              sm = boto3.client("secretsmanager")
+              sec = json.loads(sm.get_secret_value(SecretId=os.environ["DB_SECRET_ARN"])["SecretString"])
+              dim = int(os.environ["EMBEDDING_DIM"])
+              conn = pg8000.connect(
+                  host=os.environ["DB_ENDPOINT"],
+                  database=os.environ["DB_NAME"],
+                  user=sec["username"],
+                  password=sec["password"],
+                  port=int(sec.get("port", 5432)),
+                  ssl_context=True,   # Aurora requires TLS
+              )
+              try:
+                  conn.autocommit = True
+                  cur = conn.cursor()
+                  applied = 0
+                  for stmt in DDL_STATEMENTS:
+                      cur.execute(stmt % {"dim": dim})
+                      applied += 1
+                  cur.close()
+                  return applied
+              finally:
+                  conn.close()
 
           def send(event, context, status, data=None, reason=""):
               body = json.dumps({
@@ -131,18 +182,14 @@ Resources:
           def handler(event, context):
               try:
                   if event["RequestType"] == "Delete":
-                      return send(event, context, "SUCCESS")
-                  # --- real deploy: packaged psycopg connects and runs DDL ---
-                  # import boto3, psycopg
-                  # sm = boto3.client("secretsmanager")
-                  # sec = json.loads(sm.get_secret_value(SecretId=os.environ["DB_SECRET_ARN"])["SecretString"])
-                  # conn = psycopg.connect(host=os.environ["DB_ENDPOINT"], dbname=os.environ["DB_NAME"],
-                  #                        user=sec["username"], password=sec["password"], sslmode="require")
-                  # with conn, conn.cursor() as cur:
-                  #     cur.execute(DDL % {"dim": int(os.environ["EMBEDDING_DIM"])})
-                  send(event, context, "SUCCESS", {"note": "package psycopg layer in CI to run DDL"})
+                      # Schema lives in Aurora (Snapshot on delete); nothing to undo here.
+                      return send(event, context, "SUCCESS", {"note": "delete is a no-op"})
+                  applied = _run_ddl()
+                  print(f"pgvector bootstrap applied {applied} DDL statements")
+                  send(event, context, "SUCCESS", {"statements_applied": applied})
               except Exception as e:
-                  send(event, context, "FAILED", reason=str(e))
+                  import traceback; traceback.print_exc()
+                  send(event, context, "FAILED", reason=str(e)[:900])
 
   PgVectorBootstrap:
     Type: AWS::CloudFormation::CustomResource

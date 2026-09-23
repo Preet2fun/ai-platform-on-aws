@@ -29,7 +29,7 @@ Parameters:
     Description: Aurora Serverless v2 maximum capacity.
   EngineVersion:
     Type: String
-    Default: "16.4"
+    Default: "16.8"
     Description: Aurora PostgreSQL engine version (must support Serverless v2 + pgvector).
 
 Resources:

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:"Segoe UI",Roboto,Arial,sans-serif;background:#fff;color:#16213e;padding:30px 26px;width:1520px;}
+  .title{text-align:center;color:#ff9900;font-size:24px;font-weight:800;margin-bottom:3px;}
+  .sub{text-align:center;color:#5b6478;font-size:13px;margin-bottom:22px;}
+
+  .cloud{border:2px solid #232f3e;border-radius:14px;padding:32px 20px 20px;position:relative;margin-top:10px;}
+  .cloud > .tag{position:absolute;top:-13px;left:20px;background:#232f3e;color:#fff;font-size:12px;font-weight:700;
+    padding:3px 12px;border-radius:6px;letter-spacing:.3px;}
+  .region{border:1.5px dashed #00a4a6;border-radius:12px;padding:28px 16px 16px;position:relative;}
+  .region > .tag{position:absolute;top:-11px;left:16px;background:#fff;color:#00a4a6;font-size:11px;font-weight:800;padding:0 8px;}
+
+  .lane{border:1.6px solid #cbd5e8;border-radius:12px;padding:26px 16px 16px;margin:10px 0;position:relative;background:#fcfdff;}
+  .lane > .tag{position:absolute;top:-11px;left:16px;background:#fff;padding:0 10px;font-size:12px;font-weight:800;letter-spacing:.4px;}
+  .lane.off > .tag{color:#3b48cc;}
+  .lane.on  > .tag{color:#01a88d;}
+  .lane.off{border-color:#c3c9f5;}
+  .lane.on{border-color:#a9e4da;}
+
+  .row{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:nowrap;}
+  .flow{display:flex;align-items:flex-start;justify-content:center;gap:2px;flex-wrap:nowrap;}
+  .node{display:flex;flex-direction:column;align-items:center;width:122px;text-align:center;}
+  .node img{width:48px;height:48px;object-fit:contain;margin-bottom:5px;}
+  .node .n{font-size:11.5px;font-weight:700;line-height:1.25;}
+  .node .d{font-size:9.5px;color:#5b6478;line-height:1.2;margin-top:2px;}
+  .uglyph{width:48px;height:48px;border-radius:50%;background:#8b5cf6;color:#fff;display:flex;align-items:center;justify-content:center;font-size:26px;margin-bottom:5px;}
+  .arrow{color:#ff9900;font-size:20px;font-weight:800;align-self:flex-start;padding-top:16px;display:flex;flex-direction:column;align-items:center;width:34px;}
+  .arrow .lbl{font-size:8px;color:#7a8194;font-weight:600;line-height:1.1;margin-bottom:2px;}
+
+  .datastore{display:flex;justify-content:center;margin:4px 0;}
+  .db-node{display:flex;align-items:center;gap:12px;border:2px solid #3b48cc;background:#eaecff;border-radius:12px;padding:12px 22px;}
+  .db-node img{width:52px;height:52px;}
+  .db-node .n{font-size:14px;font-weight:800;color:#3b48cc;}
+  .db-node .d{font-size:11px;color:#4a4f7a;margin-top:2px;max-width:640px;}
+
+  .vconn{text-align:center;color:#ff9900;font-size:20px;font-weight:800;margin:2px 0;}
+  .vconn .lbl{font-size:9px;color:#7a8194;font-weight:600;display:block;}
+
+  .cross{border:1.5px solid #ff9900;background:#fff6e9;border-radius:10px;padding:12px 16px;margin-top:16px;}
+  .cross .h{font-size:12px;font-weight:800;color:#8a5a00;margin-bottom:10px;text-align:center;}
+  .cross .items{display:flex;gap:8px;justify-content:space-between;flex-wrap:nowrap;}
+  .cross .node{width:120px;}
+  .cross .node img{width:40px;height:40px;}
+  .cross .node .n{font-size:10.5px;}
+
+  .pipestrip{margin-top:8px;font-size:11px;color:#4a4f7a;text-align:center;line-height:1.5;}
+  .pipestrip b{color:#01a88d;}
+
+  .legend{display:flex;gap:16px;justify-content:center;margin-top:14px;font-size:10.5px;color:#5b6478;}
+  .legend span{display:inline-flex;align-items:center;gap:5px;}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block;}
+</style>
+</head>
+<body>
+  <div class="title">Cloud Security Knowledge Hub — Phase 1 AWS Architecture</div>
+  <div class="sub">Deployed baseline (no advanced RAG) · account 001961766007 · region us-east-1 · 8 CloudFormation stacks · tag usecase=rag-prod</div>
+
+  <div class="cloud">
+    <span class="tag">AWS Cloud · 001961766007</span>
+    <div class="region">
+      <span class="tag">Region us-east-1</span>
+
+      <!-- OFFLINE -->
+      <div class="lane off">
+        <span class="tag">OFFLINE — INGESTION PIPELINE (batch, on document upload)</span>
+        <div class="flow">
+          <div class="node"><img src="aws-icons/s3.svg"><div class="n">S3 — raw</div><div class="d">cshub-dev-raw · docs</div></div>
+          <div class="arrow"><span class="lbl">Object<br>Created</span>→</div>
+          <div class="node"><img src="aws-icons/eventbridge.svg"><div class="n">EventBridge</div><div class="d">rule → StartExecution</div></div>
+          <div class="arrow">→</div>
+          <div class="node"><img src="aws-icons/stepfunctions.svg"><div class="n">Step Functions</div><div class="d">5-step state machine</div></div>
+          <div class="arrow">→</div>
+          <div class="node"><img src="aws-icons/lambda.svg"><div class="n">Lambda ×5</div><div class="d">extract·clean·chunk·embed·manifest</div></div>
+          <div class="arrow"><span class="lbl">embed</span>→</div>
+          <div class="node"><img src="aws-icons/bedrock.png"><div class="n">Bedrock</div><div class="d">Titan Embeddings v2 (1024-d)</div></div>
+        </div>
+        <div class="row" style="margin-top:12px;gap:30px;">
+          <div class="node"><img src="aws-icons/s3.svg"><div class="n">S3 — processed</div><div class="d">text · clean · chunks.jsonl</div></div>
+          <div class="node"><img src="aws-icons/s3.svg"><div class="n">S3 — artifacts</div><div class="d">ingestion manifests</div></div>
+          <div class="node"><img src="aws-icons/fargate.svg"><div class="n">Fargate (opt.)</div><div class="d">heavy-embed for large docs</div></div>
+        </div>
+      </div>
+
+      <!-- SHARED DATA STORE -->
+      <div class="vconn"><span class="lbl">offline: write chunks (dense + sparse)</span>↕</div>
+      <div class="datastore">
+        <div class="db-node">
+          <img src="aws-icons/aurora.svg">
+          <div>
+            <div class="n">Aurora PostgreSQL Serverless v2 + pgvector</div>
+            <div class="d">documents · chunks — embedding vector(1024) HNSW (dense) + tsvector GIN (full-text) · in private subnets</div>
+          </div>
+        </div>
+      </div>
+      <div class="vconn"><span class="lbl">online: dense cosine retrieval (TOP_K = 6)</span>↕</div>
+
+      <!-- ONLINE -->
+      <div class="lane on">
+        <span class="tag">ONLINE — QUERY PIPELINE (per user question, Phase 1 baseline)</span>
+        <div class="flow">
+          <div class="node"><div class="uglyph">&#128100;</div><div class="n">User</div><div class="d">browser SPA</div></div>
+          <div class="arrow">→</div>
+          <div class="node"><img src="aws-icons/cloudfront.svg"><div class="n">CloudFront</div><div class="d">+ private S3 site (OAC)</div></div>
+          <div class="arrow">→</div>
+          <div class="node"><img src="aws-icons/cognito.svg"><div class="n">Cognito</div><div class="d">Hosted UI · OAuth2+PKCE</div></div>
+          <div class="arrow">→</div>
+          <div class="node"><img src="aws-icons/apigateway.svg"><div class="n">API Gateway</div><div class="d">HTTP API · JWT authorizer</div></div>
+          <div class="arrow">→</div>
+          <div class="node"><img src="aws-icons/lambda.svg"><div class="n">Query Lambda</div><div class="d">in VPC · run_pipeline()</div></div>
+          <div class="arrow">→</div>
+          <div class="node"><img src="aws-icons/bedrock.png"><div class="n">Bedrock</div><div class="d">Guardrail · Titan · Claude Sonnet 4.5</div></div>
+        </div>
+        <div class="pipestrip">
+          <b>Query Lambda pipeline (dense-only baseline):</b> input guardrail → embed query (Titan v2) → dense pgvector retrieval (top-6)
+          → build cited prompt → generate (Claude Sonnet 4.5 inference profile) → output guardrail (PII block) → cited answer + latency
+        </div>
+      </div>
+
+      <!-- CROSS-CUTTING -->
+      <div class="cross">
+        <div class="h">CROSS-CUTTING — security · observability · IaC</div>
+        <div class="items">
+          <div class="node"><img src="aws-icons/kms.svg"><div class="n">KMS CMK</div><div class="d">encrypts S3·Aurora·Secrets</div></div>
+          <div class="node"><img src="aws-icons/secrets.svg"><div class="n">Secrets Manager</div><div class="d">Aurora credentials</div></div>
+          <div class="node"><img src="aws-icons/bedrock.png"><div class="n">Bedrock Guardrails</div><div class="d">v2 · injection + PII</div></div>
+          <div class="node"><img src="aws-icons/cloudwatch.svg"><div class="n">CloudWatch</div><div class="d">dashboard·alarms·CSHub/Eval</div></div>
+          <div class="node"><img src="aws-icons/xray.svg"><div class="n">X-Ray</div><div class="d">query trace</div></div>
+          <div class="node"><img src="aws-icons/vpc.svg"><div class="n">VPC</div><div class="d">private subnets·NAT·endpoints</div></div>
+          <div class="node"><img src="aws-icons/cloudformation.svg"><div class="n">CloudFormation</div><div class="d">8 stacks·GitHub OIDC</div></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><span class="dot" style="background:#3b48cc;"></span>Offline / data</span>
+    <span><span class="dot" style="background:#01a88d;"></span>Online / query</span>
+    <span><span class="dot" style="background:#ff9900;"></span>Compute / integration</span>
+    <span><span class="dot" style="background:#d13212;"></span>Security</span>
+  </div>
+</body>
+</html>

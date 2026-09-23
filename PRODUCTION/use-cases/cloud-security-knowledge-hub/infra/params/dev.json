@@ -4,10 +4,10 @@
   "VpcCidr": "10.20.0.0/16",
   "MinAcu": "0.5",
   "MaxAcu": "2",
-  "EngineVersion": "16.4",
+  "EngineVersion": "16.8",
   "EmbeddingDim": "1024",
-  "GitHubOrg": "REPLACE_ME_github_org",
-  "GitHubRepo": "cloud-security-knowledge-hub",
+  "GitHubOrg": "Preet2fun",
+  "GitHubRepo": "ai-platform-on-aws",
   "GitHubRef": "refs/heads/main",
   "CreateOidcProvider": "true"
 }

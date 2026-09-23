@@ -25,6 +25,16 @@ runtime). Custom advanced-RAG on AWS, single region `us-east-1`, ~20 users, ~$30
 **Overall ecosystem:**
 ![Ecosystem](diagrams/03-ecosystem.png)
 
+### Phase 1 — as-deployed (baseline, no advanced RAG)
+
+**End-to-end request/response (Mermaid) — offline ingestion + online query:**
+![Phase 1 request/response](diagrams/04-phase1-request-response.png)
+_Source: `diagrams/04-phase1-request-response.mmd`_
+
+**AWS architecture (service icons) — both pipelines:**
+![Phase 1 AWS architecture](diagrams/04-phase1-aws-architecture.png)
+_Source: `_diagram-src/04-phase1-aws-architecture.html` (+ `_diagram-src/aws-icons/`)_
+
 ## Key idea: learn by measuring
 The online pipeline ships as a **simple baseline first** (Phase 1), which you measure, then
 adds advanced stages **one at a time** (Phase 2) — hybrid+RRF, Cohere Rerank, query

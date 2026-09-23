@@ -1,0 +1,81 @@
+%% Cloud Security Knowledge Hub — Phase 1 end-to-end request/response
+%% Covers BOTH pipelines as deployed (no advanced RAG): offline ingestion + online query.
+%% Grounded in: infra/02-ingestion.yaml, 03-query-service.yaml, ingestion/handlers/*,
+%% query-service/app.py + common/*. Render at mermaid.live or with the mermaid CLI.
+
+flowchart TB
+
+%% ================= OFFLINE (INGESTION) =================
+subgraph OFFLINE["OFFLINE — Ingestion pipeline (batch, on document upload)"]
+  direction TB
+  A0["Author / operator<br/>uploads .md/.txt/.pdf"] --> A1[[S3 raw bucket<br/>cshub-dev-raw]]
+  A1 -- "S3 Object Created" --> A2{{EventBridge rule<br/>cshub-dev-ingest-on-upload}}
+  A2 -- StartExecution --> SF[["Step Functions<br/>cshub-dev-ingestion"]]
+
+  subgraph SFN["Step Functions state machine (5 Lambda steps)"]
+    direction TB
+    E1["1. Extract<br/>text/md read · PDF via pypdf<br/>Textract fallback for scanned"] --> E2["2. Clean<br/>normalize whitespace,<br/>de-hyphenate, keep structure"]
+    E2 --> E3["3. Chunk<br/>structure-aware chunks<br/>+ metadata (service/topic)"]
+    E3 --> E4["4. EmbedUpsert<br/>Titan v2 embed each chunk<br/>UPSERT documents + chunks"]
+    E4 --> E5["5. Manifest<br/>quality checks:<br/>chunk_count == upserted == db_count"]
+  end
+  SF --> E1
+
+  E1 -. "read raw / write text" .-> A3[[S3 processed bucket]]
+  E2 -. "clean text" .-> A3
+  E3 -. "chunks jsonl" .-> A3
+  E4 -- "InvokeModel (embed)" --> BR1["Bedrock<br/>Titan Text Embeddings v2<br/>1024-dim"]
+  E4 -- "INSERT dense vector + text + metadata" --> DB[("Aurora PostgreSQL<br/>Serverless v2 + pgvector<br/>documents · chunks (HNSW + tsvector)")]
+  E5 -- "SELECT count(*)" --> DB
+  E5 -- "audit manifest" --> A4[[S3 artifacts bucket<br/>manifests/]]
+end
+
+%% ================= ONLINE (QUERY) =================
+subgraph ONLINE["ONLINE — Query pipeline (per user question, Phase 1 baseline)"]
+  direction TB
+  U["User (browser SPA)"] -->|1 login OAuth2 + PKCE| COG["Cognito user pool<br/>+ Hosted UI"]
+  COG -->|2 id_token JWT| U
+  U -->|3 GET static app| CF["CloudFront + S3 site<br/>(private, OAC)"]
+  U -->|"4 POST /query {question} + JWT"| APIGW["API Gateway HTTP API<br/>JWT authorizer + throttling"]
+  APIGW -->|5 authorize JWT| COG
+  APIGW -->|6 AWS_PROXY invoke| QL["Query Lambda (in VPC)<br/>app.run_pipeline()"]
+
+  subgraph PIPE["Query Lambda pipeline (baseline: dense-only)"]
+    direction TB
+    P1["a. Input guardrail<br/>ApplyGuardrail INPUT"] --> P2["b. Embed query<br/>Titan v2 (1024-dim)"]
+    P2 --> P3["c. Dense retrieval<br/>pgvector cosine, TOP_K=6"]
+    P3 --> P4["d. Build cited prompt<br/>context + question + citations"]
+    P4 --> P5["e. Generate answer<br/>Claude Sonnet 4.5 (inference profile)"]
+    P5 --> P6["f. Output guardrail<br/>ApplyGuardrail OUTPUT (PII block)"]
+  end
+  QL --> P1
+
+  P1 -- "ApplyGuardrail" --> GR["Bedrock Guardrail v2<br/>prompt-injection + PII"]
+  P2 -- "InvokeModel (embed)" --> BR1
+  P3 -- "cosine search LIMIT 6" --> DB
+  P4 -. "secret" .-> SM["Secrets Manager<br/>Aurora credentials"]
+  P5 -- "InvokeModel (generate)" --> BR2["Bedrock<br/>Claude Sonnet 4.5"]
+  P6 -- "ApplyGuardrail" --> GR
+  P6 -->|7 answer + citations + latency| APIGW
+  APIGW -->|8 JSON response| U
+end
+
+%% ================= CROSS-CUTTING =================
+QL -. "traces" .-> OBS["CloudWatch Logs + X-Ray<br/>dashboard cshub-dev-hub"]
+SF -. "logs" .-> OBS
+DB -. "data at rest" .-> KMS["KMS CMK<br/>alias/cshub-dev"]
+A1 -. "encrypted" .-> KMS
+
+classDef s3 fill:#e8f5e9,stroke:#43a047,color:#1b5e20;
+classDef compute fill:#fff3e0,stroke:#fb8c00,color:#e65100;
+classDef ai fill:#ede7f6,stroke:#7b61ff,color:#4527a0;
+classDef data fill:#e3f2fd,stroke:#1e88e5,color:#0d47a1;
+classDef sec fill:#fce4ec,stroke:#e5397d,color:#880e4f;
+classDef edge fill:#e0f7fa,stroke:#00acc1,color:#006064;
+
+class A1,A3,A4 s3;
+class SF,E1,E2,E3,E4,E5,QL,P1,P2,P3,P4,P5,P6,A2 compute;
+class BR1,BR2,GR ai;
+class DB data;
+class COG,SM,KMS sec;
+class CF,APIGW edge;

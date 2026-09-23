@@ -26,7 +26,12 @@ import sys
 import time
 
 # make sibling packages importable when run from this dir
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "query-service")))
+# ARCHIVED (2026-09-22): original RAGAS-library runner. Superseded by evals/online/
+# collect.py + score.py because RAGAS needs Python >=3.9 and app.run_pipeline() needs Aurora
+# (private VPC, unreachable from a laptop). Kept as the blueprint for a proper RAGAS run once
+# executed inside the VPC on py3.9+. Paths updated for the new layout but not exercised.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "lib")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "query-service")))
 
 from gate import evaluate_gate           # noqa: E402
 from report import aggregate, aggregate_system, render_markdown  # noqa: E402

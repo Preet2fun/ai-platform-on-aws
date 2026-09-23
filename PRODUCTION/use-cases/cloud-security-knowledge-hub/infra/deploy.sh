@@ -39,7 +39,7 @@ deploy() {
     --template-file "$HERE/$tmpl" \
     --capabilities CAPABILITY_NAMED_IAM \
     --parameter-overrides $(mkparams "$@") \
-    --tags project="$PROJECT" env="$ENV"
+    --tags project="$PROJECT" env="$ENV" usecase=rag-prod
 }
 
 # 1) network (no imports)

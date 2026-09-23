@@ -7,7 +7,7 @@ import os
 from typing import Any
 
 EMBEDDING_MODEL_ID = os.getenv("EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0")
-GENERATION_MODEL_ID = os.getenv("GENERATION_MODEL_ID", "anthropic.claude-sonnet-4-5-20250929-v1:0")
+GENERATION_MODEL_ID = os.getenv("GENERATION_MODEL_ID", "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1024"))
 GUARDRAIL_ID = os.getenv("GUARDRAIL_ID", "")
 GUARDRAIL_VERSION = os.getenv("GUARDRAIL_VERSION", "DRAFT")

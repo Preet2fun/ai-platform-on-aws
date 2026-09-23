@@ -1,7 +1,7 @@
 """Offline tests for eval aggregation, delta reporting, and the quality gate."""
 
 import sys, os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "lib")))
 
 from gate import evaluate_gate
 from report import aggregate, aggregate_system, delta_report
