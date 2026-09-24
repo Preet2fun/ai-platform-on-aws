@@ -18,6 +18,8 @@ BUCKET="${PROJECT}-${ENV}-artifacts-${ACCOUNT}"
 
 PYVER="3.12"
 PLATFORM="manylinux2014_x86_64"
+# Use a pip whose interpreter is >=3.9 so cross-version --python-version works cleanly.
+PIP="${PIP:-/Library/Frameworks/Python.framework/Versions/3.12/bin/pip3}"
 
 echo ">>> artifacts bucket: $BUCKET"
 rm -rf "$BUILD"; mkdir -p "$BUILD/query"
@@ -26,9 +28,11 @@ stage="$BUILD/query"
 # handler + shared package at zip root
 cp "$HERE/app.py" "$stage/"
 cp -R "$HERE/common" "$stage/common"
+# custom ADOT collector config (FI-6) — pins traces to the X-Ray exporter (see collector.yaml)
+cp "$HERE/collector.yaml" "$stage/"
 
 # psycopg for the Lambda target
-pip install --platform "$PLATFORM" --python-version "$PYVER" --implementation cp \
+"$PIP" install --platform "$PLATFORM" --python-version "$PYVER" --implementation cp \
   --only-binary=:all: --target "$stage" --no-cache-dir "psycopg[binary]>=3.2" >/dev/null
 
 (cd "$stage" && zip -q -r "$BUILD/query.zip" . -x '*.pyc' -x '*__pycache__*')

@@ -1,0 +1,97 @@
+{
+  "config": "phase1-online",
+  "ts": 1790168073,
+  "n": 7,
+  "quality": {
+    "faithfulness": 0.8714,
+    "answer_relevancy": 0.9214
+  },
+  "proxies": {
+    "n": 7,
+    "deflection_rate": 0.1429,
+    "guardrail_block_rate": 0.0,
+    "citation_coverage": 1.0,
+    "full_retrieval_rate": 1.0,
+    "avg_latency_ms": 5291.6,
+    "p95_latency_ms": 6846
+  },
+  "per_example": [
+    {
+      "request_id": "504a2c91-24b5-4342-87a8-be27bf112b2f",
+      "question": "How do I stop EKS pods from stealing node IAM permissions?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 6,
+      "retrieved": 6,
+      "latency_ms": 6123,
+      "faithfulness": 0.75,
+      "answer_relevancy": 1.0
+    },
+    {
+      "request_id": "c80e58eb-423d-41bb-a230-5ce313b90849",
+      "question": "what is KMS service ?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 6,
+      "retrieved": 6,
+      "latency_ms": 5762,
+      "faithfulness": 0.95,
+      "answer_relevancy": 1.0
+    },
+    {
+      "request_id": "338bc386-d80a-443d-b387-aeb8f5bb3c57",
+      "question": "what kind of encryption does KMS support ?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 6,
+      "retrieved": 6,
+      "latency_ms": 3501,
+      "faithfulness": 0.85,
+      "answer_relevancy": 0.7
+    },
+    {
+      "request_id": "2723ecd7-b228-42f3-973a-a2ad04800fa6",
+      "question": "is SignAUth 4 is part of KMS encrypton or how ?",
+      "is_idk": true,
+      "blocked": null,
+      "citations": 6,
+      "retrieved": 6,
+      "latency_ms": 3659,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.85
+    },
+    {
+      "request_id": "94018335-8f6d-4076-a0b1-0e47bef31f9f",
+      "question": "How do I prevent SSRF against EC2 IMDS?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 6,
+      "retrieved": 6,
+      "latency_ms": 5396,
+      "faithfulness": 0.85,
+      "answer_relevancy": 1.0
+    },
+    {
+      "request_id": "5bb3b515-08a9-4be4-8001-de6b3feaf6c0",
+      "question": "I need S3 bucket to get access from my EKS pod ..what are the aviable option nd how should i configure it ?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 6,
+      "retrieved": 6,
+      "latency_ms": 6846,
+      "faithfulness": 0.85,
+      "answer_relevancy": 0.95
+    },
+    {
+      "request_id": "e61254f9-9759-4c0c-8c8f-6d03d2cb6871",
+      "question": "how encryption works in S3-SSE ?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 6,
+      "retrieved": 6,
+      "latency_ms": 5754,
+      "faithfulness": 0.85,
+      "answer_relevancy": 0.95
+    }
+  ]
+}

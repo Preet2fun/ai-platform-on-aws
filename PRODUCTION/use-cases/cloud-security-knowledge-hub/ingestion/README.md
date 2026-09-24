@@ -44,8 +44,24 @@ python dry_run.py sample.txt       # preview chunking + metadata for a file
 - The Fargate image is built from `Dockerfile`, pushed to ECR
   (`<acct>.dkr.ecr.<region>.amazonaws.com/cshub-<env>-ingest:latest`).
 
+## Phase 1 vs Phase 2 (this folder)
+> Canonical run log: [`../docs/phase-1/`](../docs/phase-1/) · next phase: [`../docs/phase-2/`](../docs/phase-2/).
+
+| | **Phase 1 (shipped + live)** | **Phase 2 (planned)** | Why / what was missing |
+|---|---|---|---|
+| Chunking | Structure-aware, ~1200-char paragraph packing + 200 overlap | Per-chunk service classification; semantic / multi-representation chunking | **FI-3**: a large multi-service doc (the SRA PDF) gets one body-frequency `service` tag (all 307 chunks tagged `iam`), weakening metadata-filtered retrieval. |
+| Large docs | Lambda path only (native-text PDF OK; SRA PDF = 307 chunks) | Build the deferred **Fargate** heavy-embed path | **FI-2**: a 2,000+ chunk PDF (KMS guide) can't finish inside the 900s Lambda timeout — the Fargate route was deferred. |
+| Embedding throughput | Retry-with-backoff + inter-call pacing | Batched / rate-limited embedding | **FI-1 (done)**: throttling on large docs fixed with backoff; batching is the scale follow-up. |
+
+**Phase-1 status: the pipeline is deployed and has ingested a live corpus** (19 docs / 337
+chunks incl. the SRA PDF). Walkthrough with real numbers:
+[`../docs/phase-1/01-offline-ingestion-walkthrough.md`](../docs/phase-1/01-offline-ingestion-walkthrough.md).
+Chunking strategy detail: [`../docs/phase-1/05-chunking-and-retrieval.md`](../docs/phase-1/05-chunking-and-retrieval.md).
+Findings: [`../docs/phase-1/FUTURE-IMPROVEMENTS.md`](../docs/phase-1/FUTURE-IMPROVEMENTS.md) (FI-1, FI-2, FI-3).
+
 ## Notes / caveats
-- **Not deployed.** Templates + code authored and unit-tested only.
+- **Deployed** (Step Functions pipeline live; corpus ingested). The **Fargate heavy-embed
+  path is not built yet** (FI-2) — large multi-hundred-page PDFs use the Lambda path only.
 - The `chunks.tsv` full-text column is maintained by a **DB trigger** (from the P0 pgvector
   bootstrap), so ingestion writes only `embedding` + `chunk_text` + `metadata`.
 - Bedrock (Titan) + Aurora access happen at runtime via VPC endpoints + the DB secret; no

@@ -34,6 +34,22 @@ Parameters:
       filters set to NONE (v1 false-blocked legitimate "how does X attack work" questions),
       while keeping PROMPT_ATTACK on input and AWS-key/password PII block on output.
   TopK: { Type: Number, Default: 6 }
+  AdotPythonLayerArn:
+    Type: String
+    Default: arn:aws:lambda:us-east-1:901920570463:layer:aws-otel-python-amd64-ver-1-25-0:1
+    Description: >
+      AWS-managed ADOT (OpenTelemetry) Python Lambda layer for content-carrying GenAI traces
+      (FI-6). Must match region + architecture (x86_64) + runtime (py3.12). Span export goes to
+      CloudWatch Transaction Search (the `aws/spans` log group) via the layer's awsxray exporter;
+      Transaction Search must be enabled on the account (X-Ray trace-segment destination =
+      CloudWatchLogs + a logs resource policy allowing xray.amazonaws.com PutLogEvents — see the
+      FI-6 finding). Look up the current ARN in the ADOT Lambda layer docs if changing
+      region/version.
+  EnableGenAiTracing:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Toggle OTel GenAI content spans without a code change (read by common/tracing.py).
 
 Conditions:
   HasGuardrail: !Not [!Equals [!Ref GuardrailId, ""]]
@@ -80,6 +96,9 @@ Resources:
           - { Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: sts:AssumeRole }
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        # ADOT collector (OTel Lambda layer) exports spans to X-Ray — needs PutTraceSegments /
+        # PutTelemetryRecords. Active tracing alone doesn't grant the collector this. (FI-6)
+        - arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess
       Policies:
         - PolicyName: query-permissions
           PolicyDocument:
@@ -116,6 +135,8 @@ Resources:
       MemorySize: 1024
       Code: { S3Bucket: !Ref LambdaCodeBucket, S3Key: !Ref QueryKey }
       TracingConfig: { Mode: Active }
+      Layers:
+        - !Ref AdotPythonLayerArn        # ADOT OTel layer: provides SDK + collector + X-Ray export (FI-6)
       VpcConfig:
         SecurityGroupIds: [!ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-LambdaSgId" }]
         SubnetIds: !Split [",", !ImportValue { "Fn::Sub": "${ProjectName}-${EnvName}-PrivateSubnetIds" }]
@@ -130,6 +151,20 @@ Resources:
           TOP_K: !Ref TopK
           GUARDRAIL_ID: !Ref GuardrailId
           GUARDRAIL_VERSION: !Ref GuardrailVersion
+          # OpenTelemetry GenAI tracing (FI-6): the ADOT layer's wrapper auto-instruments the
+          # handler + boto3 and wires the X-Ray exporter; our common/tracing.py adds the content
+          # spans (question / retrieved chunks / answer).
+          AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument
+          ENABLE_GENAI_TRACING: !Ref EnableGenAiTracing
+          # Name the service so traces group under a readable node in the X-Ray service map.
+          OTEL_SERVICE_NAME: !Sub "${ProjectName}-${EnvName}-query"
+          # Minimal custom collector config bundled in the zip (otlp -> awsxray, no batch
+          # processor — the reduced Lambda collector doesn't ship it). See collector.yaml.
+          OPENTELEMETRY_COLLECTOR_CONFIG_URI: /var/task/collector.yaml
+          # Force spans to record even when there is no sampled parent trace context (e.g. a
+          # direct Lambda invoke, or API Gateway without trace propagation). Without this the
+          # SDK's parent-based sampler drops the spans and nothing reaches the collector.
+          OTEL_TRACES_SAMPLER: always_on
           # Phase-2 feature flags (all OFF for the baseline)
           ENABLE_HYBRID: "false"
           ENABLE_RERANK: "false"

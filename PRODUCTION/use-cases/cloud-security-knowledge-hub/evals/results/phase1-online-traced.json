@@ -1,0 +1,93 @@
+{
+  "config": "phase1-online-traced",
+  "ts": 1790229636,
+  "n": 6,
+  "quality": {
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.8333
+  },
+  "proxies": {
+    "n": 6,
+    "deflection_rate": 0.0,
+    "guardrail_block_rate": 0.0,
+    "citation_coverage": 0.0,
+    "full_retrieval_rate": 1.0,
+    "avg_latency_ms": 0,
+    "p95_latency_ms": 0,
+    "grounded_on_real_context": "6/6"
+  },
+  "per_example": [
+    {
+      "request_id": "bf294e47-6074-44d8-9550-bc2f5a34bbda",
+      "question": "How do I prevent SSRF against EC2 IMDS?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 1.0,
+      "answer_relevancy": 1.0,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "61aa2547-dea7-4ef7-a6b9-0116add68e87",
+      "question": "How do I stop EKS pods from stealing node IAM permissions?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.95,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "29f78c92-c8f3-44fa-bead-ad0b1011949e",
+      "question": "What kind of encryption does KMS support?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.4,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "dd0bd318-2721-46b8-97ef-12e88d6b682b",
+      "question": "How do I prevent public exposure of an S3 bucket?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 1.0,
+      "answer_relevancy": 1.0,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "4c7c60d2-58f7-4b4c-81e3-0887538754b7",
+      "question": "What kind of encryption does KMS support?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.65,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "0b9340be-1368-4182-80b2-d7b619c9a95e",
+      "question": "How do I prevent public exposure of an S3 bucket?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 1.0,
+      "answer_relevancy": 1.0,
+      "faithfulness_basis": "retrieved_context"
+    }
+  ]
+}

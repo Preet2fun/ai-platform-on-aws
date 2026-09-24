@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 from common import db
 from common.embed import embed_text
@@ -30,12 +31,15 @@ def handler(event, _context=None):
     try:
         db.upsert_document(conn, event["doc_id"], event.get("doc_metadata", {}))
         rows = []
-        for ch in chunks:
+        for i, ch in enumerate(chunks):
             vec = embed_text(ch["chunk_text"], dim=EMBEDDING_DIM)
             rows.append({
                 "chunk_id": ch["chunk_id"], "doc_id": ch["doc_id"],
                 "chunk_text": ch["chunk_text"], "embedding": vec, "metadata": ch.get("metadata", {}),
             })
+            # gentle pacing to avoid bursting Bedrock's on-demand throughput on large docs
+            if (i + 1) % 20 == 0:
+                time.sleep(1)
         upserted = db.upsert_chunks(conn, rows)
         conn.commit()
     finally:

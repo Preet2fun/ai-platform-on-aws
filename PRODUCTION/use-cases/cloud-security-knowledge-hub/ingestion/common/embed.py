@@ -20,15 +20,32 @@ def embed_text(text: str, *, client: Any | None = None, dim: int = EMBEDDING_DIM
     """Return the embedding vector for a single text.
 
     Titan v2 request shape: {"inputText": "...", "dimensions": 1024, "normalize": true}
+
+    Large documents produce many chunks, and embedding them in a tight loop can burst past
+    Bedrock's on-demand throughput → ThrottlingException. We retry with exponential backoff so
+    ingestion of big PDFs succeeds instead of failing the whole run.
     """
+    import time
+
     c = client or _client()
     body = json.dumps({"inputText": text, "dimensions": dim, "normalize": True})
-    resp = c.invoke_model(modelId=EMBEDDING_MODEL_ID, body=body)
-    payload = json.loads(resp["body"].read())
-    vec = payload["embedding"]
-    if len(vec) != dim:
-        raise ValueError(f"embedding dim mismatch: got {len(vec)}, expected {dim}")
-    return vec
+    last_err = None
+    for attempt in range(6):
+        try:
+            resp = c.invoke_model(modelId=EMBEDDING_MODEL_ID, body=body)
+            payload = json.loads(resp["body"].read())
+            vec = payload["embedding"]
+            if len(vec) != dim:
+                raise ValueError(f"embedding dim mismatch: got {len(vec)}, expected {dim}")
+            return vec
+        except Exception as e:  # noqa: BLE001
+            name = type(e).__name__
+            if ("Throttl" in name or "TooManyRequests" in str(e)) and attempt < 5:
+                time.sleep(min(2 ** attempt, 20))  # 1,2,4,8,16,20s
+                last_err = e
+                continue
+            raise
+    raise last_err  # pragma: no cover
 
 
 def embed_batch(texts: list[str], *, client: Any | None = None, dim: int = EMBEDDING_DIM) -> list[list[float]]:

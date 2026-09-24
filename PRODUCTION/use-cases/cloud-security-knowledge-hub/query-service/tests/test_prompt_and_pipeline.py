@@ -34,6 +34,7 @@ def test_empty_context_prompt():
 class _Settings:
     embedding_dim: int = 1024
     top_k: int = 3
+    generation_model_id: str = "test-model"
 
 
 def test_pipeline_baseline_happy_path(monkeypatch):

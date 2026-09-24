@@ -3,6 +3,20 @@
 Measures the RAG system's quality so each change is quantified and gated (see
 `../AI-SDLC-AND-EVALS.md`).
 
+## Phase 1 vs Phase 2 (this folder)
+> Canonical run log: [`../docs/phase-1/`](../docs/phase-1/) · next phase: [`../docs/phase-2/`](../docs/phase-2/).
+
+| | **Phase 1 (as-run)** | **Phase 2 (planned)** | Why / what was missing |
+|---|---|---|---|
+| Offline eval | Golden set (42 pairs) → LLM-judge 4 metrics → gate | Per-stage delta tables (hybrid/rerank/CoN/CRAG) | Baseline is the reference every Phase-2 change is measured against. |
+| Online eval | **Built + run** — LLM-judge + behavioural proxies on live traffic; **trace-grounded** via FI-6 | Automated **EventBridge sampler** + user-feedback (👍/👎) + drift alarms | Phase-1 was a manual run; continuous sampling/alarms are the Phase-2 infra (Steps 2/4/5 of `ONLINE-EVAL-PLAN.md`). |
+| Real retrieved context | Online scored against real context via trace spans (**FI-4 online half fixed**) | Fix **offline** FI-4 (score golden run vs real context, not local samples) | Offline batch scorer still reconstructs context from local samples → S3-only docs false-0.00. |
+| Ingestion quality | **Built + emitting** `CSHub/Ingestion` (14 metrics) + alarm | Per-chunk service tagging feeds retrieval eval (FI-3) | Was a plan placeholder; now live. |
+
+**Correction to older text below:** the golden set is now **42** human-reviewed pairs (not 38),
+online eval and ingestion-quality eval are **built** (not "not built"), and everything is
+**deployed**. Findings register: [`../docs/phase-1/FUTURE-IMPROVEMENTS.md`](../docs/phase-1/FUTURE-IMPROVEMENTS.md).
+
 ## Terminology (industry definitions — used consistently here)
 
 | | **Offline eval** | **Online eval** |
@@ -23,8 +37,11 @@ Measures the RAG system's quality so each change is quantified and gated (see
 | **Offline eval** — query pipeline (golden set → 4 accuracy metrics → gate) | ✅ **Built** | `offline/` + `golden/` + `lib/gate.py` |
 | **Offline system perf** — latency captured during the golden run | ✅ Built | `offline/score.py` → `results/baseline.json` |
 | Operational monitoring — latency, errors, alarms | ✅ Built | `infra/05-observability.yaml` (ops, not quality) |
-| **Online eval** — score real production traffic | ❌ **Not built** | design in `ONLINE-EVAL-PLAN.md` |
-| **Ingestion quality eval** — chunk/embedding quality + continuous monitoring | ❌ **Not built** | placeholder in `ingestion/` |
+| **Online eval** — score real production traffic | ✅ **Built** (Phase 1) | `online/score_online.py` → `CSHub/OnlineEval`; incl. **trace-grounded** scoring via FI-6 |
+| **Ingestion quality eval** — chunk/embedding quality + continuous monitoring | ✅ **Built** (Phase 1) | emits `CSHub/Ingestion` (14 metrics) from the Manifest step; dashboard + alarm live |
+
+> **Status note (Phase 1 as-run):** the two ❌ rows above were the original plan state; both are
+> now built. See the **Phase 1 vs Phase 2** section below and `../docs/phase-1/`.
 
 > **Important:** everything under `offline/` is **offline eval**, even though `collect.py`
 > sources answers by calling the *deployed* API. That is only an implementation detail —

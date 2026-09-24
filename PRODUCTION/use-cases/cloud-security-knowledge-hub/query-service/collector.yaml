@@ -1,0 +1,30 @@
+# Custom ADOT Collector config for the query Lambda (FI-6).
+#
+# WHY THIS EXISTS: the ADOT Python layer's DEFAULT config exports traces via the CloudWatch
+# Transaction Search path (OTLP -> `aws/spans` log group), which we don't have enabled — every
+# export failed and the collector blocked on retries, spiking latency to 35-48s. This config
+# pins traces to the CLASSIC AWS X-Ray exporter (`awsxray` -> xray:PutTraceSegments, granted via
+# AWSXRayDaemonWriteAccess) with NO logs/metrics pipeline, so there are no `aws/spans` calls.
+#
+# IMPORTANT: the ADOT *Python* layer ships a REDUCED collector. It does NOT include the `batch`
+# processor (init crash: `unknown type: "batch" ... valid values: []`). So this config uses NO
+# processors — just otlp receiver -> awsxray exporter. Keep it minimal; unsupported components
+# crash the extension (Extension.InitError / Extension.Crash) and fail the whole function.
+#
+# Pointed to by env: OPENTELEMETRY_COLLECTOR_CONFIG_URI=/var/task/collector.yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "localhost:4317"
+      http:
+        endpoint: "localhost:4318"
+
+exporters:
+  awsxray:
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [awsxray]
