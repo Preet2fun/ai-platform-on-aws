@@ -115,6 +115,12 @@ Resources:
                 Effect: Allow
                 Action: [bedrock:ApplyGuardrail]
                 Resource: !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:guardrail/*"
+              - Sid: BedrockRerank
+                Effect: Allow
+                # Phase-2 Stage 2: the Rerank API (bedrock-agent-runtime) needs bedrock:Rerank;
+                # the model invoke it performs is covered by the BedrockInvoke foundation-model/* above.
+                Action: [bedrock:Rerank]
+                Resource: "*"
               - Sid: SecretRead
                 Effect: Allow
                 Action: [secretsmanager:GetSecretValue]
@@ -165,6 +171,14 @@ Resources:
           # direct Lambda invoke, or API Gateway without trace propagation). Without this the
           # SDK's parent-based sampler drops the spans and nothing reaches the collector.
           OTEL_TRACES_SAMPLER: always_on
+          # Rerank (Phase-2 Stage 2) config
+          RERANK_MODEL_ID: cohere.rerank-v3-5:0
+          RERANK_CANDIDATE_K: "20"
+          # Query transformation (Phase-2 Stage 3) config
+          QUERY_TRANSFORM_N: "3"
+          MERGED_CANDIDATE_CAP: "60"
+          # CRAG (Phase-2 Stage 5) config — relevance floor for the corrective IDK path
+          CRAG_MIN_RELEVANCE: "0.30"
           # Phase-2 feature flags (all OFF for the baseline)
           ENABLE_HYBRID: "false"
           ENABLE_RERANK: "false"

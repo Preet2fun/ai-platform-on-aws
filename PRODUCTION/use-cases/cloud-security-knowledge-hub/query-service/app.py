@@ -18,7 +18,7 @@ import uuid
 
 from common import bedrock
 from common.config import get_settings
-from common.prompt import build_prompt, citations_payload
+from common.prompt import build_prompt, citations_payload, split_final_answer
 from common import retrieval
 from common import tracing
 
@@ -96,24 +96,70 @@ def run_pipeline(question: str, s=None, request_id: str = "") -> dict:
             tracing.record_answer(sp, gin["text"], blocked="input")
             return {"answer": gin["text"], "citations": [], "blocked": "input"}
 
-        # 2) embed query
-        qvec = bedrock.embed_query(question, dim=s.embedding_dim)
+        # 2) query set — Phase-2 Stage 3: multi-query expansion (enable_query_transform)
+        #   Broaden recall by also searching reworded variants; the reranker sorts the merged pool.
+        queries = [question]
+        if s.enable_query_transform:
+            variants = bedrock.expand_query(question, s.query_transform_n)
+            queries += variants
+            tracing.set_attr(sp, "cshub.query_variants", len(variants))
 
-        # (Phase 2 hook) query transformation would expand `question` into multiple queries here.
+        # 3) retrieval (per query) + merge/dedup by chunk_id
+        #   baseline: dense-only (pgvector cosine top-K)
+        #   Phase-2 Stage 1: hybrid = dense + full-text merged with RRF (enable_hybrid)
+        #   Phase-2 Stage 2: rerank a WIDER candidate pool down to top-K (enable_rerank)
+        fetch_k = s.rerank_candidate_k if s.enable_rerank else s.top_k
+        merged: dict = {}
+        for q in queries:
+            qv = bedrock.embed_query(q, dim=s.embedding_dim)
+            qhits = retrieval.hybrid_search(qv, q, fetch_k) if s.enable_hybrid \
+                else retrieval.dense_search(qv, fetch_k)
+            for h in qhits:
+                if h.chunk_id not in merged:
+                    merged[h.chunk_id] = h
+        hits = list(merged.values())[: s.merged_candidate_cap]
+        if s.enable_query_transform:
+            tracing.set_attr(sp, "cshub.merged_candidates", len(hits))
 
-        # 3) retrieval  — baseline: dense only
-        hits = retrieval.dense_search(qvec, s.top_k)
-        # (Phase 2 hook) if s.enable_hybrid: merge dense + fulltext via RRF
-        # (Phase 2 hook) if s.enable_rerank: Cohere Rerank the candidates
-        # (Phase 2 hook) if s.enable_chain_of_note: per-chunk notes before generation
-        # (Phase 2 hook) if s.enable_crag: grade hits, refine/fallback if weak
+        if s.enable_rerank:
+            tracing.set_attr(sp, "cshub.rerank_candidates", len(hits))
+            hits = bedrock.rerank(question, hits, s.top_k, model_id=s.rerank_model_id)
+        else:
+            # no reranker: order the merged pool by retrieval score before truncating
+            hits = sorted(hits, key=lambda h: getattr(h, "score", 0.0), reverse=True)[: s.top_k]
+        mode = ("hybrid" if s.enable_hybrid else "dense") \
+            + ("+qt" if s.enable_query_transform else "") \
+            + ("+rerank" if s.enable_rerank else "") \
+            + ("+crag" if s.enable_crag else "")
+        tracing.set_attr(sp, "cshub.retrieval_mode", mode)
         tracing.record_retrieval(sp, hits)   # <-- attaches the real retrieved passage text
 
-        # 4) build cited prompt
-        prompt, citations = build_prompt(question, hits)
+        # 3b) CRAG (Phase-2 Stage 5): grade the retrieved context via the reranker's top
+        #     relevance score; if it's below the floor, take the corrective action (honest IDK)
+        #     instead of letting the model stretch thin context into a shaky answer.
+        #     Requires rerank (that's the grade source); otherwise CRAG no-ops.
+        if s.enable_crag and s.enable_rerank and hits:
+            grade = float(getattr(hits[0], "score", 0.0) or 0.0)
+            tracing.set_attr(sp, "cshub.crag_grade", grade)
+            if grade < s.crag_min_relevance:
+                tracing.set_attr(sp, "cshub.crag_action", "idk")
+                answer = "I don't have enough information to answer that from the knowledge base."
+                tracing.record_answer(sp, answer, blocked=None, is_idk=True)
+                return {"answer": answer, "citations": [], "blocked": None,
+                        "retrieved": len(hits), "latency_ms": int((time.time() - t0) * 1000)}
+            tracing.set_attr(sp, "cshub.crag_action", "answer")
 
-        # 5) generate
-        answer = bedrock.generate(prompt)
+        # 4) build cited prompt (Phase-2 Stage 4: Chain-of-Note adds a per-passage notes step)
+        prompt, citations = build_prompt(question, hits, chain_of_note=s.enable_chain_of_note)
+        tracing.set_attr(sp, "cshub.chain_of_note", s.enable_chain_of_note)
+
+        # 5) generate (CoN emits notes + answer, so allow more output tokens)
+        raw = bedrock.generate(prompt, max_tokens=1536 if s.enable_chain_of_note else 1024)
+        if s.enable_chain_of_note:
+            answer = split_final_answer(raw)          # user sees only the post-marker answer
+            tracing.set_attr(sp, "cshub.con_notes", raw[:2000])   # notes kept for observability
+        else:
+            answer = raw
 
         # 6) output guardrails
         gout = bedrock.apply_guardrail(answer, "OUTPUT")

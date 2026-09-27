@@ -1,17 +1,18 @@
-"""Collect real baseline pipeline outputs by calling the deployed /query API.
+"""Collect offline eval records by INVOKING the query Lambda directly (no API/JWT).
 
-Runs every golden question against the live query service (P3 flags OFF), capturing the
-answer, retrieved contexts (from citations), and server-reported latency. Writes a records
-JSONL that the RAGAS scorer (score_offline.py) consumes — this lets us score accuracy
-offline while the pipeline itself runs in-VPC (Aurora is private, unreachable from here).
+Same output shape as collect.py, but calls the Lambda with a synthetic API-Gateway v2 event
+instead of curl-through-API-Gateway. Use when you don't have a Cognito token handy — the JWT
+authorizer guards the HTTP API route, not direct invoke; the pipeline (and its FI-6 trace span)
+runs identically. Captures `request_id` so score.py can join real retrieved context (FI-4 fix).
 
 Usage:
-  python collect_online.py --golden golden/golden.jsonl --api <ApiEndpoint> \
-      --token <id_token> --out results/records.jsonl
+  AWS_PROFILE=agentcore AWS_REGION=us-east-1 \
+  python collect_invoke.py --golden ../golden/golden.jsonl \
+      --function cshub-dev-query --out ../results/records.jsonl
 """
 from __future__ import annotations
 
-import argparse, json, subprocess, time
+import argparse, json, os, time
 
 
 def load_golden(path):
@@ -24,44 +25,47 @@ def load_golden(path):
     return items
 
 
-def call_api(api: str, token: str, question: str) -> dict:
-    """Use curl (system cert store) to avoid Python.org macOS SSL cert issues."""
-    body = json.dumps({"question": question})
+def _client():
+    import boto3
+    return boto3.client("lambda", region_name=os.getenv("AWS_REGION", "us-east-1"))
+
+
+def invoke(client, function: str, question: str) -> dict:
+    event = {
+        "version": "2.0", "routeKey": "POST /query", "rawPath": "/query",
+        "headers": {"content-type": "application/json"},
+        "requestContext": {"http": {"method": "POST", "path": "/query"}},
+        "body": json.dumps({"question": question}), "isBase64Encoded": False,
+    }
     t0 = time.time()
-    proc = subprocess.run(
-        ["curl", "-s", "-w", "\n%{http_code}", "-X", "POST", api,
-         "-H", "content-type: application/json",
-         "-H", f"authorization: {token}",
-         "-d", body],
-        capture_output=True, text=True, timeout=120,
-    )
+    resp = client.invoke(FunctionName=function, Payload=json.dumps(event).encode())
     client_ms = int((time.time() - t0) * 1000)
-    out = proc.stdout.rsplit("\n", 1)
-    status = int(out[-1]) if out[-1].strip().isdigit() else 0
+    payload = json.loads(resp["Payload"].read() or b"{}")
+    status = payload.get("statusCode", 0)
+    body = {}
     try:
-        data = json.loads(out[0]) if out[0].strip() else {}
+        body = json.loads(payload.get("body", "{}"))
     except json.JSONDecodeError:
-        data = {"error": out[0][:200]}
-    return {"status": status, "client_latency_ms": client_ms, **data}
+        body = {"error": str(payload)[:200]}
+    return {"status": status, "client_latency_ms": client_ms, **body}
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--golden", required=True)
-    ap.add_argument("--api", required=True)
-    ap.add_argument("--token", required=True)
+    ap.add_argument("--function", default="cshub-dev-query")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
     golden = load_golden(args.golden)
-    print(f"[collect] {len(golden)} questions against {args.api}")
+    client = _client()
+    print(f"[collect-invoke] {len(golden)} questions -> {args.function}")
 
-    import os
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     n_ok = n_err = n_idk = 0
     with open(args.out, "w", encoding="utf-8") as out:
         for i, item in enumerate(golden, 1):
-            resp = call_api(args.api, args.token, item["question"])
+            resp = invoke(client, args.function, item["question"])
             answer = resp.get("answer", "")
             contexts = [c.get("source") or c.get("doc_id") for c in resp.get("citations", [])]
             is_idk = "don't have enough information" in answer.lower()
@@ -71,8 +75,6 @@ def main() -> int:
                 "ground_truth": item.get("ground_truth", ""),
                 "expected_source_ids": item.get("expected_source_ids", []),
                 "answer": answer, "contexts": contexts,
-                # FI-4 fix: request_id lets the scorer join the REAL retrieved passage text
-                # from the FI-6 trace span (aws/spans) instead of reconstructing from local samples.
                 "request_id": resp.get("request_id", ""),
                 "retrieved": resp.get("retrieved", len(contexts)),
                 "server_latency_ms": resp.get("latency_ms", 0),
@@ -87,8 +89,9 @@ def main() -> int:
                 n_idk += 1; tag = "IDK"
             else:
                 n_ok += 1; tag = "OK "
-            print(f"  [{i}/{len(golden)}] {tag} {item['id']:<22} {rec['server_latency_ms']}ms")
-    print(f"[collect] ok={n_ok} idk={n_idk} err={n_err} -> {args.out}")
+            print(f"  [{i}/{len(golden)}] {tag} {item['id']:<22} "
+                  f"{rec['server_latency_ms']}ms rid={rec['request_id'][:8]}", flush=True)
+    print(f"[collect-invoke] ok={n_ok} idk={n_idk} err={n_err} -> {args.out}")
     return 0
 
 

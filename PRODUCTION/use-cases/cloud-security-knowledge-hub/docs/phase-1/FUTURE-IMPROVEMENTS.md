@@ -105,19 +105,18 @@ fix is to *capture what we already have*:
 Until then, restrict the golden set to docs present locally, or treat 0.00-with-a-real-answer as
 "unscored".
 
-**Status: ◑ PARTIAL — online half DONE (via FI-6), offline half PENDING.**
-- **Online path: fixed.** FI-6 now captures the real retrieved passage text on the `rag.query`
-  trace span (`cshub.retrieved_context` + per-chunk `cshub.chunk.N.text`).
-  `evals/online/score_online.py` reads it from the `aws/spans` log group (joined by
-  `cshub.request_id`) and scores faithfulness against **real retrieved context** — verified 6/6
-  live answers scored on `basis=retrieved_context` (faithfulness 1.00). The self-consistency
-  prompt remains only as a fallback when a span/context is absent.
-- **Offline path: still pending.** The pre-release golden-set scorer (`evals/offline/score.py`)
-  still reconstructs context from local `ingestion/samples`, so S3-only docs (the SRA PDF) still
-  false-0.00 there. That batch eval isn't a traced interactive session, so FI-6 doesn't cover
-  it. Remaining work: have `offline/collect.py` capture the retrieved passages (from the API
-  response or Aurora by `chunk_id`) and have `score.py` judge against them — mirroring what the
-  online scorer now does. Should land before Phase-2 so pre-release deltas use real context.
+**Status: ✅ DONE (both halves) — closed in Phase-2 Stage 0.**
+- **Online path (FI-6):** the `rag.query` trace span carries the real retrieved passage text
+  (`cshub.retrieved_context` + per-chunk `cshub.chunk.N.text`); `evals/online/score_online.py`
+  scores faithfulness against it. Verified 6/6 live answers on `basis=retrieved_context`.
+- **Offline path (Phase-2 Stage 0):** `evals/offline/collect.py` + `collect_invoke.py` now
+  capture the API `request_id`, and `evals/offline/score.py` joins the real
+  `cshub.retrieved_context` from the `aws/spans` trace by `request_id` (local-sample
+  reconstruction kept only as a fallback). Re-ran the full golden set: **42/42 scored on real
+  trace context**, and the 4 SRA questions that used to false-0.00 now score 0.75–1.00. This
+  produced the clean Phase-2 baseline (faith 0.992 / rel 0.958 / cp 0.908 / cr 0.919). Offline
+  and online eval now share the **same real-context source**. See
+  `docs/phase-2/01-hybrid-retrieval.md` (Stage 0).
 
 ---
 
@@ -136,8 +135,32 @@ baseline having no re-ranking (and compounded by FI-3's mono-service tagging).
 and larger/adaptive top-K. Also mitigated by FI-3 (accurate per-chunk service tags enabling
 metadata-filtered retrieval).
 
-**Status: ⏳ PENDING (Phase 2).** Documented as concrete evidence that advanced RAG is needed
-as the corpus scales — the headline motivation for Phase 2.
+**Status: ⏳ PENDING (Phase 2 in progress).** Quantified against real context in Phase-2
+Stage 0 (iam-config-001: answer_relevancy 0.00 / context_precision 0.30 / context_recall 0.20,
+deflects) — a genuine retrieval failure, not a scorer artifact.
+
+**Phase-2 Stage 1 (hybrid + RRF) did NOT fix it.** Hybrid retrieved the same SRA-crowded top-6
+and still deflected (cp 0.30 / cr 0.15). Root cause, proven from trace spans: FI-5 is a
+**semantic crowding** problem — the answering chunk (`iam-least-privilege.md`) is semantically
+related but **lexically dissimilar** to the question, so full-text adds nothing and the 307 SRA
+IAM-vectors still out-compete it in dense space. See `docs/phase-2/01-hybrid-retrieval.md`.
+
+**Phase-2 Stage 2 (reranking) fixes the deflection — with caveats.**
+- Rerank at `candidate_k=20` did **not** help: all 20 dense candidates were SRA chunks, so the
+  answer chunk was crowded out of the pool the reranker never saw it.
+- Rerank at **`candidate_k=60`** (Cohere Rerank 3.5) **stopped the deflection**: `iam-config-001`
+  went from IDK / answer_relevancy 0.00 → **answering / 0.75**, and all four aggregate metrics
+  improved slightly (faith 0.993 / rel 0.971 / cp 0.914 / cr 0.925).
+- **Caveats:** its context precision/recall stayed low (0.20 / 0.15) — the reranker answered
+  from *adjacent* SRA IAM passages, not the ideal `iam-least-privilege.md` chunk, so retrieval
+  quality on that question is only **partially** fixed. And `candidate_k=60` pushed **p95 latency
+  7.7s → 21.5s** (blows the 6s gate ceiling).
+
+**Status: ◑ PARTIAL.** Deflection resolved (rerank kept enabled on the live service for now).
+Remaining for the end-of-Phase-2 comparison: tune `RERANK_CANDIDATE_K` for the quality/latency
+knee, add **FI-3** (per-chunk service tags → metadata-filtered retrieval, the structural fix for
+the crowding), test hybrid+rerank together, and re-run after the next corpus upload. See
+`docs/phase-2/02-reranking.md`.
 
 ---
 

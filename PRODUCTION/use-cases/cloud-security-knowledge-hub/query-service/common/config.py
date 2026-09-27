@@ -27,6 +27,20 @@ class Settings:
     guardrail_id: str = os.getenv("GUARDRAIL_ID", "")
     guardrail_version: str = os.getenv("GUARDRAIL_VERSION", "DRAFT")
 
+    # Rerank (Phase-2 Stage 2): retrieve a wider candidate pool, then re-order by relevance.
+    rerank_model_id: str = os.getenv("RERANK_MODEL_ID", "cohere.rerank-v3-5:0")
+    rerank_candidate_k: int = int(os.getenv("RERANK_CANDIDATE_K", "20"))
+
+    # Query transformation (Phase-2 Stage 3): generate N reworded variants of the question,
+    # retrieve for each, merge+dedup the candidates (broadens recall before rerank).
+    query_transform_n: int = int(os.getenv("QUERY_TRANSFORM_N", "3"))
+    merged_candidate_cap: int = int(os.getenv("MERGED_CANDIDATE_CAP", "60"))
+
+    # CRAG (Phase-2 Stage 5): grade retrieved context via the reranker's top relevance score;
+    # if below this floor, take the corrective action (honest IDK) instead of stretching thin
+    # context into a shaky answer. Requires rerank on (that's the grade source).
+    crag_min_relevance: float = float(os.getenv("CRAG_MIN_RELEVANCE", "0.30"))
+
     # Phase-2 feature flags (OFF = baseline)
     enable_hybrid: bool = _flag("ENABLE_HYBRID")
     enable_rerank: bool = _flag("ENABLE_RERANK")

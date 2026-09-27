@@ -97,6 +97,27 @@ def dense_search(query_vec: list[float], top_k: int) -> list[Hit]:
         conn.close()
 
 
+def hybrid_search(query_vec: list[float], query_text: str, top_k: int,
+                  *, candidate_k: int | None = None) -> list[Hit]:
+    """Phase-2 hybrid retrieval: dense (pgvector) + sparse (full-text) merged with RRF.
+
+    Fetches a wider candidate pool from EACH retriever (`candidate_k`, default 2*top_k) so RRF
+    has enough to fuse, then returns the top_k fused hits. Full-text is non-fatal: if it errors
+    or returns nothing (e.g. a query with no lexical overlap), we fall back to the dense list so
+    hybrid never does worse than dense on availability.
+    """
+    ck = candidate_k or max(top_k, top_k * 2)
+    dense = dense_search(query_vec, ck)
+    try:
+        sparse = fulltext_search(query_text, ck)
+    except Exception:  # noqa: BLE001 - full-text must never break retrieval
+        sparse = []
+    if not sparse:
+        return dense[:top_k]
+    fused = reciprocal_rank_fusion([dense, sparse])
+    return fused[:top_k]
+
+
 def fulltext_search(query_text: str, top_k: int) -> list[Hit]:
     conn = _connect()
     try:

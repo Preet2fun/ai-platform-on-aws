@@ -10,18 +10,22 @@ are directly comparable and feed the same gate/report:
   - context_precision   : are the retrieved contexts relevant to the question (low noise)?
   - context_recall      : do the retrieved contexts cover the ground-truth answer?
 
-Contexts: the /query API returns only citation SOURCE ids, so we reconstruct the retrieved
-passage TEXT from the local corpus (ingestion/samples) by doc_id for accurate scoring.
+Contexts (FI-4 fix): the scorer now judges against the **real retrieved passage text**. Each
+record carries a `request_id`; we join it to the FI-6 GenAI trace span (`aws/spans`,
+`cshub.retrieved_context`) to get exactly what retrieval returned. If a span isn't found
+(tracing off, or an older record), we fall back to reconstructing text from the local corpus
+(`ingestion/samples`) by doc_id — the pre-FI-4 behaviour, which false-0.00s S3-only docs.
 
 Usage:
   python score_offline.py --records results/records.jsonl --config baseline \
-      --out results/baseline.json [--emit-cloudwatch]
+      --out results/baseline.json [--emit-cloudwatch] [--minutes 180]
 """
 from __future__ import annotations
 
 import argparse, json, os, re, sys, time
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "lib")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "online")))
 from report import aggregate, aggregate_system  # noqa: E402
 
 # corpus lives at <usecase>/ingestion/samples — two levels up from evals/online/
@@ -38,6 +42,27 @@ def _doc_text(doc_id: str) -> str:
         with open(path, encoding="utf-8") as f:
             return f.read()
     return ""
+
+
+def _load_trace_context(minutes: int) -> dict:
+    """Return {request_id: retrieved_context} from FI-6 trace spans (aws/spans).
+
+    Reuses the online scorer's loader so offline + online share the SAME real-context source.
+    Non-fatal: returns {} if traces are unavailable, and the scorer falls back to local samples.
+    """
+    try:
+        from score_online import load_trace_context  # evals/online/score_online.py
+        raw = load_trace_context(minutes)  # {rid: {retrieved_context, ...}}
+        return {rid: v.get("retrieved_context", "") for rid, v in raw.items()}
+    except Exception as e:  # noqa: BLE001
+        print(f"[score] trace-context load skipped ({e}); using local-sample fallback")
+        return {}
+
+
+def _local_context(rec: dict) -> str:
+    """Fallback (pre-FI-4): reconstruct context from local sample files by cited doc_id."""
+    doc_ids = list(dict.fromkeys(rec.get("contexts", [])))
+    return "\n\n---\n\n".join(t for t in (_doc_text(d) for d in doc_ids) if t)[:12000]
 
 
 def _bedrock():
@@ -80,19 +105,27 @@ CREC = ("Score from 0.0 to 1.0 how fully the CONTEXT covers the information in t
         "Reply with ONLY the number.\n\nGROUND TRUTH:\n{gt}\n\nCONTEXT:\n{ctx}\n\nScore:")
 
 
-def score_record(client, rec: dict) -> dict:
-    # unique cited docs -> concatenated corpus text (the retrieved context)
-    doc_ids = list(dict.fromkeys(rec.get("contexts", [])))
-    ctx = "\n\n---\n\n".join(t for t in (_doc_text(d) for d in doc_ids) if t)[:12000]
+def score_record(client, rec: dict, trace_ctx: dict | None = None) -> dict:
+    """Score one record. Prefer REAL retrieved context from the FI-6 trace span (joined by
+    request_id); fall back to local-sample reconstruction if no span context is available."""
+    trace_ctx = trace_ctx or {}
+    rid = rec.get("request_id", "")
+    ctx = (trace_ctx.get(rid) or "").strip()
+    basis = "trace_context"
+    if not ctx:
+        ctx = _local_context(rec)
+        basis = "local_samples"
     ans, q, gt = rec.get("answer", ""), rec.get("question", ""), rec.get("ground_truth", "")
     if not ctx:
         return {"faithfulness": 0.0, "answer_relevancy": 0.0,
-                "context_precision": 0.0, "context_recall": 0.0}
+                "context_precision": 0.0, "context_recall": 0.0,
+                "context_basis": "none"}
     return {
-        "faithfulness": _judge(client, FAITH.format(ctx=ctx, ans=ans)),
+        "faithfulness": _judge(client, FAITH.format(ctx=ctx[:12000], ans=ans)),
         "answer_relevancy": _judge(client, RELV.format(q=q, ans=ans)),
-        "context_precision": _judge(client, CPREC.format(q=q, ctx=ctx)),
-        "context_recall": _judge(client, CREC.format(gt=gt, ctx=ctx)),
+        "context_precision": _judge(client, CPREC.format(q=q, ctx=ctx[:12000])),
+        "context_recall": _judge(client, CREC.format(gt=gt, ctx=ctx[:12000])),
+        "context_basis": basis,
     }
 
 
@@ -102,19 +135,28 @@ def main() -> int:
     ap.add_argument("--config", default="baseline")
     ap.add_argument("--out", required=True)
     ap.add_argument("--emit-cloudwatch", action="store_true")
+    ap.add_argument("--minutes", type=int, default=180,
+                    help="Look-back window for joining real context from trace spans (FI-4 fix).")
     args = ap.parse_args()
 
     records = [json.loads(l) for l in open(args.records, encoding="utf-8") if l.strip()]
     client = _bedrock()
-    print(f"[score] {len(records)} records · judge={JUDGE_MODEL} (concurrent)")
+    # FI-4 fix: pull real retrieved context from the FI-6 trace spans, keyed by request_id.
+    trace_ctx = _load_trace_context(args.minutes)
+    have_rid = sum(1 for r in records if r.get("request_id"))
+    print(f"[score] {len(records)} records · judge={JUDGE_MODEL} (sequential) · "
+          f"{len(trace_ctx)} trace spans loaded ({have_rid} records carry request_id)")
 
     scored = []
     for i, rec in enumerate(records, 1):
-        s = score_record(client, rec)
+        s = score_record(client, rec, trace_ctx)
         scored.append((rec, s))
         print(f"  [{i}/{len(records)}] {rec['id']:<22} "
               f"f={s['faithfulness']:.2f} ar={s['answer_relevancy']:.2f} "
-              f"cp={s['context_precision']:.2f} cr={s['context_recall']:.2f}", flush=True)
+              f"cp={s['context_precision']:.2f} cr={s['context_recall']:.2f} "
+              f"[{s.get('context_basis')}]", flush=True)
+    grounded = sum(1 for _, s in scored if s.get("context_basis") == "trace_context")
+    print(f"[score] scored against REAL trace context: {grounded}/{len(scored)}")
 
     rows, per_example = [], []
     for rec, s in scored:
