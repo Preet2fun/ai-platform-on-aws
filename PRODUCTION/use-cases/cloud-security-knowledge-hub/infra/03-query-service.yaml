@@ -185,6 +185,8 @@ Resources:
           ENABLE_QUERY_TRANSFORM: "false"
           ENABLE_CHAIN_OF_NOTE: "false"
           ENABLE_CRAG: "false"
+          # FI-3 metadata filter — restrict retrieval to the query's service (Phase-2). Off = baseline.
+          ENABLE_METADATA_FILTER: "false"
 
   QueryLogGroup:
     Type: AWS::Logs::LogGroup

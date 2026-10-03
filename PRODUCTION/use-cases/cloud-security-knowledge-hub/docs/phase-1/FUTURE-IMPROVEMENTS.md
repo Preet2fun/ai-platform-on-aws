@@ -66,15 +66,55 @@ filename**, so it fell to body-frequency, and across a 100-page doc that touches
 `service_coverage` shows `iam: 309` after ingesting the SRA. The `service` tag is therefore
 misleading for broad reference documents, which would weaken metadata-filtered retrieval.
 
-**Proposed solution.** Classify `service` **per chunk from the chunk's own text** (the pipeline
-already builds per-chunk metadata in `chunk.py`), and only use the filename as a hint when the
-chunk text is ambiguous. Optionally drop the whole-doc `service` for multi-service docs (set it
-to `mixed`/null) and rely on the per-chunk tags. For higher accuracy, consider an
-embedding/LLM classifier instead of keyword matching.
+**Root cause (found during the build, subtler than "one service per doc").** `chunk.py` already
+computed per-chunk metadata, but it passed the whole doc-level metadata as `overrides=` and
+`build_metadata()` ends with `md.update(overrides)` — so the doc-level `service` **clobbered**
+every chunk's own inference. The per-chunk intent was silently overwritten.
 
-**Status: ⏳ PENDING.** Documented as a finding from the SRA ingestion. Not blocking — dense
-retrieval (the Phase-1 baseline) does not use the `service` filter; it matters when
-metadata-filtered / hybrid retrieval is enabled in Phase 2.
+**Proposed solution → BUILT.** Classify `service` **per chunk from the chunk's own text**, and
+only fall back to the filename/doc-level tag when the chunk is ambiguous:
+- **Ingestion (`ingestion/common/metadata.py`):** added `infer_chunk_service()` (body-frequency
+  first, filename hint only as fallback) and `build_chunk_metadata()` (per-chunk service/topic;
+  inherits doc-level source/title/version/sensitivity; per-chunk service **wins**; non-fatal
+  fallback to doc-level). `chunk.py` now calls `build_chunk_metadata()` instead of the
+  clobbering path.
+- **Retrieval (`query-service/common/retrieval.py`, Phase-2 / gated):** a new
+  `enable_metadata_filter` flag (`ENABLE_METADATA_FILTER`, default **off**). When on and the
+  question names a service (`infer_query_service()`), retrieval adds
+  `WHERE metadata->>'service' = %s` so the answer chunk competes only against same-service
+  chunks — this is what lets FI-5 recover at **small k** (no need for a huge candidate pool).
+  **Non-fatal:** if the filtered set has fewer than top-K hits, it refetches **unfiltered**
+  (never over-filters to nothing). Phase-1 dense path is unchanged when the flag is off.
+
+**Status: ◑ Per-chunk tagging DONE + proven; query-time filter MEASURED and REJECTED (left OFF).**
+Per-chunk classifier + gated filter implemented, unit-tested (ingestion 27/27, query 30/30),
+deployed to `cshub-dev-ingest-chunk` and `cshub-dev-query`. The **tagging half is a keeper**
+(correct per-chunk services corpus-wide). The **query-time hard filter is net-harmful** — Phase-2
+measured it regressing FI-5 and over-deflecting multi-service questions, so it stays **OFF** and
+needs the soft-boost redesign noted below before any reuse.
+
+> **Per-chunk re-tag is now DONE and verified (2026-09-28).** The corpus was enlarged (+11 PDFs)
+> and **all 19 pre-existing docs re-ingested in place** (same S3 key → same `doc_id`/`chunk_id`
+> → `ON CONFLICT DO UPDATE`, no duplication; corpus 30 docs / 534 chunks). Verified from the
+> chunk handler's own JSONL in the processed bucket: the **SRA doc's 306 chunks now span 19
+> distinct services** (`iam 135, s3 28, ec2 25, vpc 24, config 15, securityhub 14, kms 12, …`)
+> instead of all-`iam`; multi-service PDFs tag correctly (e.g. `data-protection.pdf` →
+> ec2/ebs/iam/cloudtrail/vpc), genuinely single-service docs stay single (e.g.
+> `security-iam-service-with-iam.pdf` → all iam). The clobber is gone corpus-wide.
+>
+> **Retrieval proof — measured in Phase 2, and it BACKFIRED.** Turning `ENABLE_METADATA_FILTER`
+> on (Phase-2 all-on) made `iam-config-001` **worse**, not better: ctx-precision 0.65 → 0.30,
+> ctx-recall 0.30 → 0.10, ans-rel 1.00 → 0.30. Root cause: `infer_query_service` picks the single
+> most-mentioned service and the filter **hard-restricts** (`WHERE service = x`). This question
+> ("grant an app on **EC2** access to AWS services") infers `ec2`, so the hard filter *excluded*
+> the `iam-least-privilege` chunk — the opposite of the intended fix. More broadly the hard filter
+> contributed to Phase-2's over-deflection on multi-service questions.
+>
+> **Decision: metadata filter left OFF (not shipped).** The per-chunk *tags* are correct and
+> useful data; the *hard-filter consumer* is the wrong design. Redesign before any reuse: use the
+> service tag as a **soft rerank boost** (not a hard `WHERE`), or allow the **top-2** inferred
+> services, so a single wrong guess can't exclude the answer chunk. The shipped Phase-2 config
+> (hybrid + rerank only) does **not** use the filter. See `docs/phase-2/PHASE-2-CONCLUSION.md` §4/§7.
 
 ---
 
@@ -109,58 +149,43 @@ Until then, restrict the golden set to docs present locally, or treat 0.00-with-
 - **Online path (FI-6):** the `rag.query` trace span carries the real retrieved passage text
   (`cshub.retrieved_context` + per-chunk `cshub.chunk.N.text`); `evals/online/score_online.py`
   scores faithfulness against it. Verified 6/6 live answers on `basis=retrieved_context`.
-- **Offline path (Phase-2 Stage 0):** `evals/offline/collect.py` + `collect_invoke.py` now
-  capture the API `request_id`, and `evals/offline/score.py` joins the real
-  `cshub.retrieved_context` from the `aws/spans` trace by `request_id` (local-sample
-  reconstruction kept only as a fallback). Re-ran the full golden set: **42/42 scored on real
-  trace context**, and the 4 SRA questions that used to false-0.00 now score 0.75–1.00. This
-  produced the clean Phase-2 baseline (faith 0.992 / rel 0.958 / cp 0.908 / cr 0.919). Offline
-  and online eval now share the **same real-context source**. See
-  `docs/phase-2/01-hybrid-retrieval.md` (Stage 0).
+- **Offline path:** `evals/offline/collect_invoke.py` captures the `request_id`, and
+  `evals/offline/score.py` joins the real `cshub.retrieved_context` from the `aws/spans` trace by
+  `request_id` (local-sample reconstruction kept only as a fallback). On the canonical
+  `phase1-final` run: **61/61 records scored on real trace context** (zero fallback), and
+  PDF-sourced answers that used to false-0.00 now score correctly. Offline and online eval share
+  the **same real-context source**. See `docs/phase-1/02-offline-eval.md`.
 
 ---
 
-## FI-5 — Corpus growth degraded IAM retrieval (a genuine regression)
+## FI-5 — Dense top-6 misses the best chunk on a large, multi-service corpus
 
-**Problem statement.** After ingesting the SRA PDF (307 IAM-tagged, IAM-heavy chunks), the
-golden question `iam-config-001` ("secure way to grant an app on EC2 access to AWS services")
-— which **scored ~1.0 in the Iteration-1 baseline** — now returns **"I don't have enough
-information"** (0.00). Root cause: the 307 new IAM-related chunks **crowd the top-6 dense
-retrieval** for IAM queries, pushing out the specific `iam-least-privilege.md` chunk that used
-to answer it. This is a real retrieval regression caused by corpus growth + the dense-only
-baseline having no re-ranking (and compounded by FI-3's mono-service tagging).
+**Problem statement.** On the canonical **30-doc / 534-chunk** corpus, the golden question
+`iam-config-001` ("secure way to grant an app on EC2 access to AWS services") **answers** but
+with **context recall only 0.30** at dense top-6 (baseline `phase1-final`, scored against real
+trace context: faithfulness 1.00 / answer_relevancy 1.00 / context_precision 0.65 / context_recall
+0.30). Root cause: the many IAM-related chunks (esp. from the SRA doc) **crowd the top-6 dense
+retrieval** for IAM queries, so the specific `iam-least-privilege.md` chunk isn't well-covered in
+what retrieval returns. The same recall gap appears on the new PDFs (`rds-tls-attack-001` cr 0.15,
+`s3-encryption-prevent-001` cr 0.20, `eks-pod-attack-001` cr 0.30). This is a retrieval-quality
+gap of the dense-only baseline with no re-ranking and no metadata filtering.
 
-**Proposed solution.** This is exactly what **Phase-2 advanced RAG** targets: hybrid retrieval
-+ **re-ranking** (surface the most relevant chunk regardless of how many similar ones exist),
-and larger/adaptive top-K. Also mitigated by FI-3 (accurate per-chunk service tags enabling
-metadata-filtered retrieval).
+**Proposed solution.** This is exactly what the **Phase-2 all-on** configuration targets:
+**re-ranking** (surface the most relevant chunk regardless of how many similar ones exist) at a
+modest candidate pool (**k ≈ 10**), plus the **FI-3 per-chunk metadata filter** so a
+service-named query competes only against same-service chunks (the structural fix — keeps the
+answer chunk in a small pool without a huge k). Query-transform / Chain-of-Note / CRAG are on in
+the same configuration.
 
-**Status: ⏳ PENDING (Phase 2 in progress).** Quantified against real context in Phase-2
-Stage 0 (iam-config-001: answer_relevancy 0.00 / context_precision 0.30 / context_recall 0.20,
-deflects) — a genuine retrieval failure, not a scorer artifact.
-
-**Phase-2 Stage 1 (hybrid + RRF) did NOT fix it.** Hybrid retrieved the same SRA-crowded top-6
-and still deflected (cp 0.30 / cr 0.15). Root cause, proven from trace spans: FI-5 is a
-**semantic crowding** problem — the answering chunk (`iam-least-privilege.md`) is semantically
-related but **lexically dissimilar** to the question, so full-text adds nothing and the 307 SRA
-IAM-vectors still out-compete it in dense space. See `docs/phase-2/01-hybrid-retrieval.md`.
-
-**Phase-2 Stage 2 (reranking) fixes the deflection — with caveats.**
-- Rerank at `candidate_k=20` did **not** help: all 20 dense candidates were SRA chunks, so the
-  answer chunk was crowded out of the pool the reranker never saw it.
-- Rerank at **`candidate_k=60`** (Cohere Rerank 3.5) **stopped the deflection**: `iam-config-001`
-  went from IDK / answer_relevancy 0.00 → **answering / 0.75**, and all four aggregate metrics
-  improved slightly (faith 0.993 / rel 0.971 / cp 0.914 / cr 0.925).
-- **Caveats:** its context precision/recall stayed low (0.20 / 0.15) — the reranker answered
-  from *adjacent* SRA IAM passages, not the ideal `iam-least-privilege.md` chunk, so retrieval
-  quality on that question is only **partially** fixed. And `candidate_k=60` pushed **p95 latency
-  7.7s → 21.5s** (blows the 6s gate ceiling).
-
-**Status: ◑ PARTIAL.** Deflection resolved (rerank kept enabled on the live service for now).
-Remaining for the end-of-Phase-2 comparison: tune `RERANK_CANDIDATE_K` for the quality/latency
-knee, add **FI-3** (per-chunk service tags → metadata-filtered retrieval, the structural fix for
-the crowding), test hybrid+rerank together, and re-run after the next corpus upload. See
-`docs/phase-2/02-reranking.md`.
+**Status: ⏳ STILL OPEN after Phase 2.** The intended fix (FI-3 metadata filter) **backfired** on
+this exact case (ctx-recall 0.30 → 0.10 under all-on — see FI-3). The **shipped** Phase-2 config
+(hybrid + rerank only) leaves `iam-config-001` at its **baseline** level (ctx-precision 0.65,
+ctx-recall 0.30, ans-rel 1.00 — it *answers* correctly, the recall is just thin). So FI-5 is
+neither regressed nor fixed by the shipped config; it is carried forward. Candidate fixes for a
+later pass: the **soft service-boost** redesign (FI-3), question-aware service inference (detect
+that an IAM-permissions question is about `iam` even when it mentions `ec2`), or an IAM-specific
+chunk-boost. Measured in `docs/phase-2/PHASE-2-CONCLUSION.md`; small-corpus exploration archived
+in `docs/phase-2/_archive-small-corpus/`.
 
 ---
 
@@ -231,6 +256,38 @@ cost profile; keep the indexing sampling rate modest for cost.
 **Phase-2 note:** this trace-eval foundation is exactly what Phase 2 will lean on — every
 advanced-RAG stage (hybrid/rerank/CoN/CRAG) can be A/B-measured from the spans with real
 retrieved context, per conversation.
+
+---
+
+## FI-7 — Offline judge penalizes honest refusals (out-of-corpus questions)
+
+**Problem statement.** The grown golden set adds 3 **out-of-corpus (OOC)** questions (Azure, GCP,
+bare-metal kubeadm) so CRAG's "refuse when nothing relevant" behavior is measurable. On the
+Phase-1 baseline (`phase1-final`), all 3 returned **correct honest refusals** ("I don't have
+enough information … the knowledge base is about AWS …") — the desired behavior — yet the
+**offline** scorer scored them near-zero (ans-rel 0.00, faith ~0.33). Root cause is a **prompt
+mismatch**: `score.py`'s faithfulness prompt asks "is every claim supported by the CONTEXT" and
+its relevancy prompt asks "does the answer address the QUESTION"; an honest refusal has no
+context-grounded claims and does not "address" an Azure question, so both score ~0. The
+**online** scorer (`score_online.py`) already handles this correctly — its prompts explicitly
+state that a truthful "I don't have information" to an out-of-scope question should score high.
+
+**Impact.** OOC pairs drag the *all-questions* offline aggregate down (0.938/0.884 vs the
+in-corpus 0.969/0.930) and would make an honest refusal look like a failure. It does **not**
+bias the Phase-1-vs-Phase-2 delta (both phases run the identical scorer and both refuse on OOC),
+but it does make the raw aggregate misleading.
+
+**Workaround used for the head-to-head.** Report **in-corpus (58)** as the headline quality
+number for both phases; track the 3 OOC pairs separately as a binary **refusal-correctness**
+check (did it refuse? yes/no) rather than via the faithfulness/relevancy judge.
+
+**Proposed fix.** Port the online judge's refusal-aware wording into `score.py`'s FAITH/RELV
+prompts (a truthful IDK to a question with no relevant context scores 1.0 on both), or branch on
+`is_idk` + empty `expected_source_ids` to score OOC refusals on a refusal rubric. Deferred so the
+Phase-1 and Phase-2 offline runs use an identical scorer.
+
+**Status: ⏳ Pending** — identified during `phase1-final`; documented, not yet fixed (deliberately,
+to keep the two phases' scorer identical).
 
 ---
 

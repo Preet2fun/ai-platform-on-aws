@@ -53,8 +53,8 @@ python dry_run.py sample.txt       # preview chunking + metadata for a file
 | Large docs | Lambda path only (native-text PDF OK; SRA PDF = 307 chunks) | Build the deferred **Fargate** heavy-embed path | **FI-2**: a 2,000+ chunk PDF (KMS guide) can't finish inside the 900s Lambda timeout — the Fargate route was deferred. |
 | Embedding throughput | Retry-with-backoff + inter-call pacing | Batched / rate-limited embedding | **FI-1 (done)**: throttling on large docs fixed with backoff; batching is the scale follow-up. |
 
-**Phase-1 status: the pipeline is deployed and has ingested a live corpus** (19 docs / 337
-chunks incl. the SRA PDF). Walkthrough with real numbers:
+**Phase-1 status: the pipeline is deployed and has ingested a live corpus** (30 docs / 534
+chunks incl. the SRA + encryption/EKS/RDS PDFs). Walkthrough with real numbers:
 [`../docs/phase-1/01-offline-ingestion-walkthrough.md`](../docs/phase-1/01-offline-ingestion-walkthrough.md).
 Chunking strategy detail: [`../docs/phase-1/05-chunking-and-retrieval.md`](../docs/phase-1/05-chunking-and-retrieval.md).
 Findings: [`../docs/phase-1/FUTURE-IMPROVEMENTS.md`](../docs/phase-1/FUTURE-IMPROVEMENTS.md) (FI-1, FI-2, FI-3).

@@ -108,12 +108,15 @@ def run_pipeline(question: str, s=None, request_id: str = "") -> dict:
         #   baseline: dense-only (pgvector cosine top-K)
         #   Phase-2 Stage 1: hybrid = dense + full-text merged with RRF (enable_hybrid)
         #   Phase-2 Stage 2: rerank a WIDER candidate pool down to top-K (enable_rerank)
+        #   FI-3: metadata filter — restrict retrieval to the query's service (enable_metadata_filter)
+        svc_filter = retrieval.infer_query_service(question) if s.enable_metadata_filter else None
+        tracing.set_attr(sp, "cshub.metadata_filter", svc_filter or "none")
         fetch_k = s.rerank_candidate_k if s.enable_rerank else s.top_k
         merged: dict = {}
         for q in queries:
             qv = bedrock.embed_query(q, dim=s.embedding_dim)
-            qhits = retrieval.hybrid_search(qv, q, fetch_k) if s.enable_hybrid \
-                else retrieval.dense_search(qv, fetch_k)
+            qhits = retrieval.hybrid_search(qv, q, fetch_k, service=svc_filter) if s.enable_hybrid \
+                else retrieval.dense_search(qv, fetch_k, service=svc_filter)
             for h in qhits:
                 if h.chunk_id not in merged:
                     merged[h.chunk_id] = h
@@ -128,6 +131,7 @@ def run_pipeline(question: str, s=None, request_id: str = "") -> dict:
             # no reranker: order the merged pool by retrieval score before truncating
             hits = sorted(hits, key=lambda h: getattr(h, "score", 0.0), reverse=True)[: s.top_k]
         mode = ("hybrid" if s.enable_hybrid else "dense") \
+            + ("+mdfilter" if svc_filter else "") \
             + ("+qt" if s.enable_query_transform else "") \
             + ("+rerank" if s.enable_rerank else "") \
             + ("+crag" if s.enable_crag else "")

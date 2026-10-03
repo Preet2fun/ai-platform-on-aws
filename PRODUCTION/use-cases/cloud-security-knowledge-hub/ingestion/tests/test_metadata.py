@@ -3,7 +3,9 @@
 import sys, os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from common.metadata import infer_service, infer_topic, build_metadata
+from common.metadata import (
+    infer_service, infer_topic, build_metadata, infer_chunk_service, build_chunk_metadata,
+)
 
 
 def test_infer_service():
@@ -52,3 +54,41 @@ def test_build_metadata_defaults_and_overrides():
     md2 = build_metadata(source="x", text_sample="", overrides={"sensitivity": "internal", "service": "iam"})
     assert md2["sensitivity"] == "internal"
     assert md2["service"] == "iam"
+
+
+# ---- FI-3: per-chunk service classification ----
+
+def test_infer_chunk_service_uses_body_not_filename():
+    # A chunk about S3 inside a doc named for the SRA (no service in name) -> s3, not a doc tag.
+    text = "Enable S3 Block Public Access on every bucket and use SSE-KMS default encryption."
+    assert infer_chunk_service(text, source="aws-security-reference-architecture-v4.pdf") == "s3"
+
+
+def test_infer_chunk_service_body_wins_over_filename_service():
+    # Even when the filename names a service, a chunk that clearly discusses another wins.
+    text = "This section is entirely about Amazon EKS pod identity and IRSA for EKS workloads eks."
+    assert infer_chunk_service(text, source="iam-least-privilege.md") == "eks"
+
+
+def test_infer_chunk_service_falls_back_to_filename_when_body_empty():
+    # A heading-only / serviceless chunk falls back to the filename hint.
+    assert infer_chunk_service("Overview and background.", source="kms-key-security.md") == "kms"
+    assert infer_chunk_service("Overview.", source="notes.md") is None
+
+
+def test_build_chunk_metadata_per_chunk_service_not_doc_clobber():
+    # THE FI-3 REGRESSION: a multi-service doc (doc-level service=iam) must NOT stamp iam on an
+    # S3 chunk. The chunk's own text must win; doc-level fields are inherited.
+    doc_md = {"source": "aws-security-reference-architecture-v4.pdf", "title": "SRA",
+              "service": "iam", "topic": "prevention", "version": "v4", "sensitivity": "public"}
+    s3_chunk = "S3 Block Public Access and bucket policies prevent public S3 exposure."
+    cm = build_chunk_metadata(chunk_text=s3_chunk, doc_metadata=doc_md)
+    assert cm["service"] == "s3"                      # per-chunk wins, NOT doc-level iam
+    assert cm["source"] == doc_md["source"]           # doc-level fields inherited
+    assert cm["version"] == "v4" and cm["sensitivity"] == "public"
+
+
+def test_build_chunk_metadata_falls_back_to_doc_service_when_chunk_ambiguous():
+    doc_md = {"source": "iam-least-privilege.md", "service": "iam", "sensitivity": "public"}
+    cm = build_chunk_metadata(chunk_text="Introduction and overview.", doc_metadata=doc_md)
+    assert cm["service"] == "iam"                     # nothing in chunk body -> doc fallback

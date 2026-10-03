@@ -85,6 +85,49 @@ Service coverage after: `iam 309` (307 from the SRA — see FI-3), then the per-
   `iam`). Needs per-chunk service classification.
 
 ## Net result
-**Offline ingestion for an appropriately-sized PDF works end-to-end and is fully observable.**
-Corpus is clean at **19 docs / 337 chunks**, 0% null/empty, integrity + quality both green. The
-SRA is our successfully-ingested large-PDF evidence; KMS is the documented scaling boundary.
+**Offline ingestion works end-to-end and is fully observable.** After the SRA proof-of-scale run
+(this section) and the corpus enlargement + FI-3 re-ingestion (§A.11), the **canonical corpus is
+30 docs / 534 chunks / 17 services**, 0% null/empty, integrity + quality green. The SRA is our
+successfully-ingested large-PDF evidence; the very large KMS PDF is the documented scaling
+boundary (FI-2, Fargate deferred).
+
+---
+
+## A.11 — Corpus enlargement + FI-3 re-ingestion (final re-test)
+
+Ahead of the final Phase-1-vs-Phase-2 comparison, the corpus was enlarged and the whole corpus
+re-tagged with the **FI-3** per-chunk service classifier.
+
+### A.11.1 — 11 new PDFs (auto-ingested)
+11 encryption/data-protection/EKS/RDS PDFs were uploaded to
+`s3://cshub-dev-raw-001961766007/docs/`. Each upload's `Object Created` event **auto-fired** the
+same EventBridge → Step Functions pipeline (no manual invoke) — **11 executions, all SUCCEEDED**.
+Corpus went **19 → 30 docs**, **337 → 534 chunks**, services_covered **17**, null-embedding **0.0**.
+
+### A.11.2 — Re-ingesting the 19 pre-existing docs (in place)
+The FI-3 fix only changes *new* ingestions, so the 19 pre-existing docs still carried the old
+clobbered per-doc tags. To re-tag them, each existing `docs/*` object was **re-copied onto its
+own key** (`aws s3 cp <k> <k> --metadata-directive REPLACE`), which re-fires `Object Created`.
+
+Because `doc_id` and `chunk_id` are **deterministic** from the S3 key + chunk ordinal, and the DB
+upsert is `INSERT … ON CONFLICT (chunk_id) DO UPDATE`, re-ingestion **updates rows in place** —
+no duplicates. Corpus stayed exactly **30 docs / 534 chunks** after all 19 re-ran (all SUCCEEDED).
+
+### A.11.3 — FI-3 proof (per-chunk service tags)
+Verified from the chunk handler's own JSONL output in the processed bucket
+(`s3://cshub-dev-processed-001961766007/chunks/docs/<key>.jsonl`) — this is FI-3's ground truth
+*before* the DB upsert, and the DB (in-VPC, not reachable from the workstation) receives the same
+metadata:
+
+- **SRA** — 306 chunks now span **19 distinct services** (`iam 135, s3 28, ec2 25, vpc 24,
+  config 15, securityhub 14, kms 12, waf 12, guardduty 11, cloudtrail 8, route53 6,
+  secretsmanager 4, cognito 4, lambda 3, ebs 2, eks 1, cloudwatch 1, apigateway 1, rds 1`),
+  vs. **all `iam`** before. This is the fix that makes the FI-5 metadata filter viable.
+- `data-protection.pdf` → `ec2, ebs, iam, cloudtrail, vpc` (correctly multi-service).
+- `security-iam-service-with-iam.pdf` → all `iam` (correctly single-service).
+- `iam-least-privilege.md` (FI-5 target) → `iam`.
+
+### A.11.4 — Findings update
+- **FI-3** moves from *pending* to **built + deployed + proven on the whole corpus** (per-chunk
+  tags correct). The *query-time* metadata filter that consumes these tags is gated behind
+  `ENABLE_METADATA_FILTER` and is exercised in the Phase-2 run.

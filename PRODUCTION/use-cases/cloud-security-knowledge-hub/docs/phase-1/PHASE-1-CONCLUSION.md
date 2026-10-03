@@ -4,7 +4,7 @@
 > (dense retrieval → Claude generation with citations → guardrails) taken through **live
 > ingestion, offline evaluation, live online testing, and observability**, with every stage
 > documented against real AWS evidence. Account `001961766007` · `us-east-1` · tag
-> `usecase=rag-prod`. Run date: 2026-09-23.
+> `usecase=rag-prod`. Canonical baseline run: 2026-09-28 (`phase1-final`, 30 docs / 534 chunks).
 
 ## 1. What Phase 1 set out to prove
 That the baseline is **real, measured, and improvable** — a trustworthy reference point for
@@ -17,40 +17,48 @@ have honest numbers and findings to act on."
 | Stage | Outcome |
 |---|---|
 | **C0 — Q&A capture** | Added the `CSHUB_QA` structured log line to the query Lambda (zero added latency). This is the prerequisite that makes online eval possible. Deployed + verified live. |
-| **A — Offline ingestion** | Ingested the AWS Security Reference Architecture PDF live: **307 chunks, avg 980 chars, 0% null/empty, integrity passed.** Proved the FI-1 throttling fix works (SRA failed before the fix, succeeded after). Corpus ended clean at **19 docs / 337 chunks / 17 services**. |
-| **B — Offline eval** | Golden set grown to **42 pairs** (+4 SRA). Re-scored via Bedrock LLM-judge. Corrected baseline (37 comparable Qs): **faithfulness 0.915 · relevancy 0.959 · precision 0.932 · recall 0.938**, p95 7.5s. Surfaced FI-4 (scorer artifact) and FI-5 (genuine IAM regression). |
-| **C — Online testing** | Scored **7 live UI questions** through the new online scorer: **faithfulness 0.871 · relevancy 0.921**, deflection 14.3%, guardrail-block 0%, citation coverage 100%, avg latency 5.3s. Metrics emitted to `CSHub/OnlineEval`. |
+| **A — Offline ingestion** | Ingested PDFs live end-to-end (native `pypdf`, structure-aware chunking, 0% null/empty, integrity passed) and proved the FI-1 throttling fix. Corpus ended at **30 docs / 534 chunks / 17 services**, with FI-3 per-chunk service tags applied corpus-wide (SRA now spans 19 services, not all-`iam`). |
+| **B — Offline eval** | Canonical baseline `phase1-final` on the full **30-doc / 534-chunk** corpus with the **61-pair** golden set, every record scored against **real retrieved context** (FI-6 spans, 61/61). In-corpus (58): **faithfulness 0.969 · relevancy 0.930 · precision 0.849 · recall 0.845**, p95 7.6s. Surfaced FI-5 (IAM/new-PDF recall gap) and FI-7 (judge penalizes honest refusals). |
+| **C — Online testing** | 13 questions (10 in-corpus + 3 out-of-corpus) driven through the deployed UI, scored against real trace context (13/13). Config `phase1-final-online`: **faithfulness 0.955 · answer_relevancy 0.873 · deflection 23.1%** (all 3 OOC correctly refused) · guardrail-block 0%. |
 | **D — Observability** | Full telemetry inventory captured with live sample values across `CSHub/Ingestion` (14), `CSHub/Eval` (4), `CSHub/OnlineEval` (8); 4 alarms all OK; dashboard + budget documented; console navigation written; 5 observability gaps logged. |
 | **E — AI-SDLC reconciliation** | `AI-SDLC-AND-EVALS.md` updated with a §9 "as-run reality" that reconciles the plan with what actually ran. |
 
 ## 3. Headline results
 
-**Offline (pre-release gate) — `phase1-post-sra`, 37 comparable Qs**
-| Metric | Iteration-1 baseline | Phase-1 (post-SRA) | Δ |
+**Offline (pre-release gate) — `phase1-final`, 61-pair golden, 30-doc/534-chunk corpus**
+| Metric | In-corpus 58 (headline) | All 61 (CloudWatch) | Gate floor |
 |---|---|---|---|
-| Faithfulness | 0.984 | 0.915 | −0.069 |
-| Answer relevancy | 0.976 | 0.959 | −0.017 |
-| Context precision | 0.940 | 0.932 | −0.008 |
-| Context recall | 0.947 | 0.938 | −0.009 |
-| p95 latency (ms) | 7,046 | 7,506 | +460 |
+| Faithfulness | **0.969** | 0.938 | 0.80 |
+| Answer relevancy | **0.930** | 0.884 | 0.75 |
+| Context precision | **0.849** | 0.811 | 0.70 |
+| Context recall | **0.845** | 0.818 | 0.70 |
+| p95 latency (ms) | 7,591 | 7,591 | (ceiling 6,000) |
 
-**Online (live traffic) — `phase1-online`, 7 questions**
-| faithfulness | relevancy | deflection | guardrail-block | citation cov. | avg lat | p95 lat |
-|---|---|---|---|---|---|---|
-| 0.871 | 0.921 | 14.3% | 0% | 100% | 5,292 ms | 6,846 ms |
+Every record was scored against the **real retrieved context** (FI-6 trace spans, 61/61). The
+in-corpus scores clear all accuracy floors comfortably; p95 latency is over the ceiling (Claude
+generation time). The 3 out-of-corpus pairs score low on the offline judge only because it
+penalizes honest refusals (**FI-7**) — the answers were correct refusals; see §6.
 
-Both stay **well above the gate floors** (faith 0.80 / rel 0.75 / cp 0.70 / cr 0.70). The
-system is grounded (100% citation coverage) and **honest under uncertainty** — an out-of-scope
-question ("is SigV4 part of KMS encryption?") correctly returned "I don't have enough
+**Online (live traffic) — `phase1-final-online`, 13 questions (13/13 on real trace context)**
+| faithfulness | answer_relevancy | deflection | guardrail-block | grounded-on-real-context |
+|---|---|---|---|---|
+| 0.955 | 0.873 | 23.1% (3/13, all OOC) | 0% | 13/13 |
+
+Same 13 questions are reused verbatim for Phase-2 (fair A/B). See `03-online-testing.md`.
+
+The system is grounded (citations on in-corpus answers) and **honest under uncertainty** — the
+out-of-corpus questions (Azure, GCP, bare-metal kubeadm) correctly returned "I don't have enough
 information" rather than hallucinating.
 
 ## 4. The single most important finding
-**FI-5 — corpus growth degraded IAM retrieval.** Adding 307 IAM-heavy SRA chunks pushed the
-specific chunk that used to answer `iam-config-001` out of the top-6 of **dense-only**
-retrieval, so a question that scored ~1.0 at baseline now deflects. This is not a bug to patch
-— it is the **measured, concrete evidence** that the baseline needs **hybrid retrieval +
-re-ranking + larger top-K**. It is the headline motivation for Phase 2, produced by the eval
-loop doing exactly its job.
+**FI-5 — dense top-6 misses the best chunk on a large, multi-service corpus.** On the full
+30-doc corpus, `iam-config-001` still *answers* but its **context recall is only 0.30** at dense
+top-6 — the specific `iam-least-privilege.md` chunk competes against hundreds of IAM-tagged SRA
+chunks. The same recall gap shows on the new PDFs (`rds-tls-*`, `s3-encryption-*`,
+`eks-pod-attack`). This is **measured, concrete evidence** that the baseline needs **the FI-3
+per-chunk metadata filter + reranking** (at a modest k), and it is the headline motivation for
+Phase 2 — produced by the eval loop doing exactly its job. (FI-3 now tags every chunk by its own
+service; enabling the query-time filter is what Stage 2 measures.)
 
 ## 5. Findings register (Phase 1)
 Full detail in [`FUTURE-IMPROVEMENTS.md`](./FUTURE-IMPROVEMENTS.md).
@@ -59,24 +67,24 @@ Full detail in [`FUTURE-IMPROVEMENTS.md`](./FUTURE-IMPROVEMENTS.md).
 |---|---|---|
 | FI-1 | Embedding throttling on large docs (ingestion loop) | ✅ Done (backoff + pacing) |
 | FI-2 | Scale embedding for very large docs (batch / Fargate) | ⏳ Pending |
-| FI-3 | Per-chunk service metadata for multi-service docs | ⏳ Pending |
-| FI-4 | Offline scorer uses local samples, not real retrieval → false 0.00 | ◑ Partial (online half fixed via FI-6; offline pending) |
-| FI-5 | Corpus growth degraded IAM retrieval (genuine regression) | ⏳ Pending (Phase 2) |
-| FI-6 | OTel content-carrying traces (query/context/answer) → trace-grounded online eval | ✅ Done (verified 6/6 grounded) |
+| FI-3 | Per-chunk service metadata for multi-service docs | ◑ Built + proven corpus-wide (filter gated for Phase 2) |
+| FI-4 | Offline scorer used local samples, not real retrieval → false 0.00 | ✅ Done (scores against FI-6 trace context, 61/61) |
+| FI-5 | Dense top-6 recall gap on large multi-service corpus | ⏳ Pending (Phase 2 — filter + rerank) |
+| FI-6 | OTel content-carrying traces (query/context/answer) → trace-grounded eval | ✅ Done (offline + online score on real context) |
+| FI-7 | Offline judge penalizes honest refusals (OOC pairs) | ⏳ Pending (report in-corpus; fix judge later) |
 
 Plus 5 **observability gaps** (corpus-gauge drift, dashboard hardcoded to `baseline`, no
 OnlineEval widget, no eval-drift alarms, chunks not console-browsable) in
 [`04-observability.md`](./04-observability.md) §D.6.
 
 ## 6. Known limits of this Phase-1 run (honesty box)
-- **Offline scores on PDF-sourced content are understated** in raw CloudWatch until FI-4 is
-  fixed; the corrected numbers are the ones to trust.
-- **Online eval was a manual 7-question sample**, not the automated sampler/feedback/alarm
-  infra from `../../evals/ONLINE-EVAL-PLAN.md` (Steps 2/4/5 deferred).
-- **Online faithfulness** is judged on answer self-consistency, not the real retrieved passage
-  text (same root cause as FI-4).
+- **Out-of-corpus pairs score low on the offline judge (FI-7):** the 3 OOC answers were correct
+  refusals, but the offline judge penalizes refusals, so the **in-corpus (58)** number is the
+  honest headline and OOC is tracked as a separate refusal-correctness check.
+- **Online eval is a fixed 10-question run** through the UI, not the automated sampler/feedback/
+  alarm infra from `../../evals/ONLINE-EVAL-PLAN.md` (Steps 2/4/5 deferred).
 - **Large multi-hundred-page PDFs** have no ingestion path yet (FI-2 Fargate deferred).
-- **Golden set is 42 pairs**, below the ~100–200 v1 target; it grows via the log-mining flywheel.
+- **Golden set is 61 pairs**, below the ~100–200 v1 target; it grows via the log-mining flywheel.
 - **CI eval-gate** is designed and runs locally, but not yet wired into a pipeline.
 
 None of these block the Phase-1 conclusion; each is tracked and has an owner path into Phase 2.

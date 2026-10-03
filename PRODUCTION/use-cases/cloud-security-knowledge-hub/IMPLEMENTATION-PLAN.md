@@ -254,17 +254,21 @@ latency/cost delta → **keep only if the gain justifies the cost** → document
 
 **Exit criteria:** regression gate live in CI; dashboards populated; budget alarm active.
 
-> ✅ **P4 EXECUTED & ITERATION-1 BASELINE RECORDED 2026-09-22** (account `001961766007`, us-east-1).
-> - **Corpus** expanded to 16 AWS-security docs / 27 chunks (all Step Functions runs SUCCEEDED).
+> ✅ **P4 EXECUTED & CANONICAL PHASE-1 BASELINE RECORDED** (account `001961766007`, us-east-1).
+> - **Corpus** (canonical baseline): **30 AWS-security docs / 534 chunks / 17 services** (all
+>   Step Functions runs SUCCEEDED; FI-3 per-chunk service tags applied corpus-wide).
 > - **Observability** deployed (`cshub-dev-observability`): dashboard `cshub-dev-hub`, alarms
 >   (query errors, p95 latency, API 5xx), SNS alerts (email needs confirm-click), $300 budget.
-> - **Golden set**: 38 human-reviewed pairs (`evals/golden/golden.jsonl`), balanced across
->   config/attack/prevention and all 16 services.
-> - **Baseline eval (Advanced RAG OFF)** — offline accuracy + online performance:
->   faithfulness **0.984**, answer_relevancy **0.976**, context_precision **0.940**,
->   context_recall **0.947**; p50 5,752ms / p95 **7,046ms** / avg 5,611ms; 0 errors.
->   Gate: accuracy PASSES all floors; p95 latency FAILS the 6,000ms ceiling (generation-time,
->   a known baseline characteristic — quality is unaffected).
+> - **Golden set**: **61 human-reviewed pairs** (`evals/golden/golden.jsonl`) — 24 config / 19
+>   attack / 18 prevention, 18 services, incl. 3 out-of-corpus pairs.
+> - **Baseline eval (Advanced RAG OFF)** `phase1-final`, scored against real FI-6 trace context
+>   (61/61) — offline accuracy + performance, **in-corpus 58 (headline):**
+>   faithfulness **0.969**, answer_relevancy **0.930**, context_precision **0.849**,
+>   context_recall **0.845**; p95 **7,591ms** / avg 5,843ms; 0 errors. (All-61 incl. OOC:
+>   0.938 / 0.884 / 0.811 / 0.818 — OOC refusals penalized by the offline judge, FI-7.)
+>   Gate: in-corpus accuracy PASSES all floors; p95 FAILS the 6,000ms ceiling (generation-time,
+>   a known baseline characteristic — quality is unaffected). Earlier smaller-corpus runs are
+>   superseded by this comprehensive baseline.
 > - **Key finding + fix:** the Bedrock Guardrail MISCONDUCT filter was false-blocking
 >   legitimate "how does X attack work" questions (all 12 attack Qs scored 0.00). Created
 >   **guardrail v2** (MISCONDUCT/VIOLENCE input→NONE, kept PROMPT_ATTACK + PII output block);

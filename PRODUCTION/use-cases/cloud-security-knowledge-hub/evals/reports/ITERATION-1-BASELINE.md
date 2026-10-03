@@ -1,37 +1,41 @@
-# Iteration 1 — Baseline Evaluation Report (Advanced RAG OFF)
+# Phase-1 Baseline Evaluation Report (Advanced RAG OFF) — canonical
 
 > **System:** Cloud Security Knowledge Hub (production RAG) · account `001961766007` · `us-east-1`
-> **Run date:** 2026-09-22 · **Config:** `baseline` (all Phase-3 flags OFF)
-> **Purpose:** establish the reference point for the later Phase-3 (advanced RAG) comparison.
-> This is an **offline evaluation** (fixed golden set + ground truth, pre-release quality gate):
-> it covers **accuracy** (RAGAS-style metrics) and **system performance** (latency captured
-> during the golden-set run). It is Iteration 1 of two: baseline now, advanced RAG next.
+> **Run date:** 2026-09-28 · **Config:** `phase1-final` (all advanced-RAG flags OFF)
+> **Purpose:** the single reference point for the Phase-2 (advanced RAG) comparison.
 >
-> **Note on terminology:** this is *offline* eval even though answers are collected by calling
-> the deployed API (Aurora sits in a private VPC, so the pipeline can't run on a laptop). It is
-> NOT *online* eval — we do not sample or score real production traffic. See
-> `evals/README.md` and `evals/ONLINE-EVAL-PLAN.md`.
+> This is an **offline evaluation** — fixed golden set + ground truth, run as a pre-release
+> quality gate. It covers **accuracy** (RAGAS-style metrics via Bedrock LLM-as-judge) and
+> **system performance** (latency captured during the run). Answers are collected by invoking
+> the deployed query Lambda directly (Aurora is in a private VPC, so the pipeline can't run on a
+> laptop); it is still offline (fixed golden questions, labeled ground truth), not online eval.
+>
+> **Scope note:** earlier exploratory runs on a smaller corpus are superseded. All numbers here
+> are from the full **30-doc / 534-chunk** corpus with the **61-pair** golden set — the only
+> legitimate, comprehensive baseline.
 
 ---
 
 ## 1. What "baseline" means here
 
-The deployed Phase-1/2 query pipeline, with **no advanced-RAG stages enabled**:
+The deployed query pipeline with **no advanced-RAG stages enabled**:
 
 ```
 question → input guardrail → Titan v2 embed → dense pgvector retrieval (top-6, cosine)
          → Claude Sonnet 4.5 generation (cited) → output guardrail → answer
 ```
 
-Feature flags `ENABLE_HYBRID`, `ENABLE_RERANK`, `ENABLE_QUERY_TRANSFORM`,
-`ENABLE_CHAIN_OF_NOTE`, `ENABLE_CRAG` are all **false**. This is dense-retrieval-only RAG.
+Flags `ENABLE_HYBRID`, `ENABLE_RERANK`, `ENABLE_QUERY_TRANSFORM`, `ENABLE_CHAIN_OF_NOTE`,
+`ENABLE_CRAG`, `ENABLE_METADATA_FILTER` are all **false**. Dense-retrieval-only RAG. Tracing
+(FI-6 OTel spans) is on.
 
-**Corpus:** 16 AWS-security documents (27 chunks) spanning S3, EC2/IMDS, RDS (public + IAM
-auth), IAM, Lambda, VPC/SG, CloudTrail, KMS, Secrets Manager, Cognito, EKS, EBS snapshots,
-SNS/SQS, API Gateway, GuardDuty — each covering configuration/attack/prevention.
+**Corpus:** 30 AWS-security documents / 534 chunks / 17 services — 18 markdown security notes
+plus 12 PDFs (AWS Security Reference Architecture; S3/RDS encryption; data-protection; EKS pod +
+best-practices; RDS SSL/TLS; Lambda MicroVMs; IAM-with-a-service).
 
-**Golden set:** 38 human-reviewed Q&A pairs (`evals/golden/golden.jsonl`), balanced across
-14 configuration / 13 attack / 11 prevention, one primary AWS service each.
+**Golden set:** 61 human-reviewed Q&A pairs (`evals/golden/golden.jsonl`) — 24 configuration /
+19 attack / 18 prevention, 18 distinct services, all `reviewed_by=human`, including 3
+out-of-corpus (OOC) pairs.
 
 ---
 
@@ -39,129 +43,112 @@ SNS/SQS, API Gateway, GuardDuty — each covering configuration/attack/preventio
 
 | Aspect | How |
 |---|---|
-| **Answer collection** | `evals/offline/collect.py` calls the deployed `POST /query` (Cognito-authed) for all 38 golden questions, capturing the pipeline answer, citations, and server latency. Sourcing answers from the deployed API is an implementation detail (Aurora is in a private VPC); the eval is still offline (fixed golden questions, labeled ground truth). |
-| **Accuracy scoring** | `evals/offline/score.py` — Bedrock **LLM-as-judge** (Claude Sonnet 4.5) scores each answer 0–1 on the four RAG metrics against the golden ground truth. Used instead of the RAGAS library because the local runtime is Python 3.8 (RAGAS needs ≥3.9); LLM-as-judge is an approved scoring layer in `AI-SDLC-AND-EVALS.md §4`. |
-| **Contexts** | The `/query` API returns citation **source ids**, not passage text, so the scorer reconstructs retrieved-context text from the local corpus (`ingestion/samples`) by `doc_id`. |
+| **Answer collection** | `evals/offline/collect_invoke.py` invokes the deployed `cshub-dev-query` Lambda for all 61 golden questions, capturing answer, citations, `request_id`, and server latency. |
+| **Accuracy scoring** | `evals/offline/score.py` — Bedrock **LLM-as-judge** (Claude Sonnet 4.5) scores each answer 0–1 on the four RAG metrics. Used instead of RAGAS because the local runtime is Python 3.8 (RAGAS needs ≥3.9); LLM-as-judge is an approved layer in `AI-SDLC-AND-EVALS.md §4`. |
+| **Contexts (FI-4 fixed)** | The scorer joins each record's `request_id` to its **FI-6 trace span** (`aws/spans`, `cshub.retrieved_context`) and judges against the **real retrieved passage text**. This run: **61/61 scored on `trace_context`**, zero local-sample fallback. |
 | **Metrics** | faithfulness, answer relevancy, context precision, context recall (accuracy) + p50/p95/avg latency (performance). |
-| **Gate** | `evals/thresholds.json` floors + system ceilings, evaluated by `evals/gate.py`. |
-
-> **Fidelity note:** LLM-as-judge scores are directionally accurate and internally
-> consistent (same judge, same prompts across iterations), which is what matters for a
-> baseline-vs-Phase-3 **delta**. Absolute values may differ slightly from the RAGAS library.
+| **Gate** | `evals/thresholds.json` floors, evaluated by `evals/gate.py`. |
 
 ---
 
-## 3. Headline results
+## 3. Headline results (config `phase1-final`, n=61)
 
-### 3.1 Accuracy (offline, golden set, n=38)
-
-| Metric | Baseline | Gate floor | Status |
-|---|---|---|---|
-| Faithfulness (groundedness) | **0.984** | 0.80 | ✅ pass |
-| Answer relevancy | **0.976** | 0.75 | ✅ pass |
-| Context precision | **0.940** | 0.70 | ✅ pass |
-| Context recall | **0.947** | 0.70 | ✅ pass |
-
-### 3.2 Performance (latency measured during the golden-set run, n=38)
-
-| Metric | Baseline | Ceiling | Status |
-|---|---|---|---|
-| Latency p50 | 5,752 ms | — | — |
-| Latency p95 | **7,046 ms** | 6,000 ms | 🔴 **fail** |
-| Latency avg | 5,611 ms | — | — |
-| Errors / 5xx | 0 / 38 | — | ✅ |
-| Guardrail false-blocks | 0 / 38 | — | ✅ (after fix — see §5) |
-
-### 3.3 Gate verdict
-
-**FAIL — on performance only.** All four accuracy metrics clear their floors comfortably;
-the single failure is **p95 latency (7,046 ms) over the 6,000 ms ceiling**. Root cause is
-Claude Sonnet 4.5 generation time plus occasional Lambda cold starts — not a quality problem.
-This is a known, expected baseline characteristic and a target for later optimization
-(streaming, provisioned concurrency, or a faster generation model).
-
----
-
-## 4. Breakdown by question type
-
-| Question type | n | Faithfulness | Answer rel. | Context prec. | Context recall |
+| Metric | All 61 (CloudWatch) | **In-corpus 58 (headline)** | OOC 3 | Gate floor | Status |
 |---|---|---|---|---|---|
-| configuration | 14 | 0.989 | 0.982 | 0.943 | 0.926 |
-| attack | 13 | 0.973 | 0.969 | 0.931 | 0.977 |
-| prevention | 11 | 0.991 | 0.977 | 0.945 | 0.937 |
+| Faithfulness | 0.938 | **0.969** | 0.33 | 0.80 | ✅ pass |
+| Answer relevancy | 0.884 | **0.930** | 0.00 | 0.75 | ✅ pass |
+| Context precision | 0.811 | **0.849** | 0.07 | 0.70 | ✅ pass |
+| Context recall | 0.818 | **0.845** | 0.30 | 0.70 | ✅ pass |
 
-**Reading it:** quality is high and even across all three types. Attack questions show
-slightly lower faithfulness/precision (they require the model to describe a mechanism, which
-is harder to keep perfectly grounded) but the **highest context recall** (attack docs are
-distinctive, so dense retrieval finds them reliably). Configuration/prevention have marginally
-lower recall — expected, since prevention guidance often spans two chunks of the same doc.
+**Performance:** p95 **7,591 ms** · avg **5,843 ms** · 0 errors. p95 exceeds the 6,000 ms
+ceiling — a Claude generation-time characteristic of the dense baseline, not a quality issue.
 
----
+**Collection:** 56 answered · 5 IDK · 0 errors.
 
-## 5. The most important baseline finding (and fix)
-
-**Guardrail false-positive on security-education questions.** The first eval run scored
-**0.00 on all 12 attack-type questions**. Investigation (not guesswork — verified with
-`apply_guardrail`) showed the Bedrock Guardrail's **MISCONDUCT filter (HIGH)** was **blocking
-legitimate questions** like *"How does an SSRF attack against EC2 IMDS work?"* at the input
-stage. For a security-education assistant, describing how an attack works **is the core use
-case**, so this was a critical false-positive.
-
-**Fix (guardrail v2):** set MISCONDUCT and VIOLENCE input strength to `NONE`, while keeping:
-- **PROMPT_ATTACK = HIGH** on input (prompt-injection still blocked — verified),
-- HATE / SEXUAL filters,
-- output-side PII block for AWS access keys / secret keys / passwords.
-
-Post-fix: **0 / 38 false-blocks**, prompt-injection still blocked. This is the exact
-"measure → find the real issue → fix → re-measure" loop the eval process exists for, and it
-is baked into the baseline used for the Phase-3 comparison.
+> **Headline = in-corpus 58** (faith 0.969 / rel 0.930 / cp 0.849 / cr 0.845). The all-61
+> aggregate is dragged down by the 3 OOC pairs; see §5.
 
 ---
 
-## 6. Lowest-scoring examples (where Phase-3 could help)
+## 4. Breakdown by question type (in-corpus)
 
-| Example | Avg score | Likely Phase-3 lever |
-|---|---|---|
-| `iam-attack-001` (privilege escalation) | 0.887 | Chain-of-Note (tighten grounding of the mechanism) |
-| `rds-config-001` (IAM DB auth) | 0.913 | Hybrid+RRF / rerank (exact-term recall: "rds-db:connect") |
-| `lambda-prevent-001` | 0.917 | Rerank (rank the most on-point chunk first) |
-| `ec2-config-001` (IMDSv2 vs v1) | 0.925 | Rerank / query-transform |
-| `iam-prevent-001` | 0.925 | Hybrid retrieval (multi-aspect prevention guidance) |
+| Question type | Faithfulness | Answer rel. | Context prec. | Context recall |
+|---|---|---|---|---|
+| configuration | high, even | high | mixed (new PDFs lower) | mixed (new PDFs lower) |
+| attack | high | high | high | mixed |
+| prevention | high | high | mixed | mixed |
 
-These are the concrete cases to watch when advanced RAG is enabled — they hint that
-**hybrid retrieval + reranking** (exact-term precision) and **Chain-of-Note** (grounding on
-attack mechanisms) are the highest-leverage Phase-3 stages for this corpus.
+Faithfulness is uniformly high (~0.97). The variation is in **context precision/recall**, driven
+by the new multi-topic PDFs and the large multi-service SRA doc — exactly the retrieval surface
+Phase-2 targets (see §6).
+
+---
+
+## 5. The OOC scoring artifact (FI-7) — read before comparing phases
+
+The 3 out-of-corpus questions (Azure, GCP, bare-metal kubeadm) returned **correct honest
+refusals** ("I don't have enough information … the knowledge base is about AWS …"). That is the
+desired behavior. But the **offline** judge scored them near-zero, because its faithfulness
+prompt asks "is every claim supported by the CONTEXT" and its relevancy prompt asks "does the
+answer address the QUESTION" — an honest refusal has no context-grounded claims and doesn't
+"address" an Azure question. The **online** scorer already rewards honest refusals.
+
+Consequences:
+- **Report in-corpus (58) as the true quality number** for both phases.
+- Track the 3 OOC pairs separately as a **refusal-correctness** check (did it refuse? yes/no).
+- Phase-2's CRAG also refuses on OOC, so scoring OOC with this judge in both phases would cancel
+  out — but the honest, apples-to-apples quality number is in-corpus.
+
+Logged as **FI-7**. Fix is a prompt tweak in `score.py`; deferred so Phase-1 and Phase-2 use an
+identical (if imperfect) scorer and the delta stays fair.
+
+---
+
+## 6. In-corpus retrieval gaps at dense top-6 (the Phase-2 targets)
+
+| Example | ctx-recall | ctx-prec | ans-rel | Likely Phase-2 lever |
+|---|---|---|---|---|
+| `rds-tls-attack-001` | 0.15 | 0.10 | 0.65 | rerank + metadata filter (right RDS doc) |
+| `s3-encryption-prevent-001` | 0.20 | 0.10 | 0.20 | rerank (was collected as IDK) |
+| **`iam-config-001`** (FI-5) | **0.30** | 0.65 | 1.00 | metadata filter (IAM) + rerank@k=10 |
+| `sra-prevent-001` | 0.30 | 0.75 | 0.85 | rerank (large multi-service SRA doc) |
+| `rds-tls-prevent-001` | 0.30 | 0.75 | 0.95 | rerank + metadata filter |
+| `eks-pod-attack-001` | 0.30 | 0.85 | 0.92 | rerank |
+| `s3-encryption-config-001` | 0.65 | 0.85 | 0.95 | rerank |
+| `apigw-config-001` | 0.75 | 0.65 | 0.70 | rerank (was collected as IDK) |
+
+**`iam-config-001` is the long-standing FI-5 case:** it answers well (ans-rel 1.00) but context
+recall is only 0.30 at dense top-6 — the metadata filter (now that FI-3 tags chunks per-service)
++ rerank@k=10 are measured against exactly this in Stage 2.
 
 ---
 
 ## 7. System / cost notes
 
-- **Latency:** dominated by Claude Sonnet 4.5 generation (~4–6 s) + retrieval (~0.2 s) +
-  cold starts on idle Lambdas (adds ~1–2 s). p95 over ceiling is a generation-time issue.
-- **Reliability:** 38/38 answered, 0 API errors, 0 unexpected "I don't know".
-- **Cost:** per-query cost was not separately metered in this run (Titan embed is ~$0; Claude
-  Sonnet generation is the driver). To be added via Bedrock invocation logging in a later pass;
-  the gate's `avg_cost_usd_per_query` ceiling is not yet populated.
-- **Observability:** aggregate scores emitted to CloudWatch namespace `CSHub/Eval`
-  (Config=`baseline`); dashboard `cshub-dev-hub`.
+- **Latency:** dominated by Claude Sonnet 4.5 generation (~4–6 s) + retrieval (~0.2 s) + cold
+  starts. p95 over ceiling is a generation-time issue, not quality.
+- **Reliability:** 56/61 answered, 5 correct IDK (incl. 3 OOC + 2 in-corpus recall gaps), 0 errors.
+- **Cost:** per-query cost not separately metered this run (Titan embed ~$0; Claude generation is
+  the driver).
+- **Observability:** aggregate scores emitted to CloudWatch `CSHub/Eval` (Config=`phase1-final`).
 
 ---
 
 ## 8. Reproduce
 
 ```bash
-# 1) collect pipeline outputs over the golden set (needs a Cognito id_token)
-python evals/offline/collect.py --golden evals/golden/golden.jsonl \
-  --api <ApiEndpoint> --token <id_token> --out evals/results/records.jsonl
+# 1) collect pipeline outputs over the golden set (direct Lambda invoke, all flags OFF)
+AWS_PAGER="" AWS_PROFILE=agentcore AWS_REGION=us-east-1 \
+python3 evals/offline/collect_invoke.py --golden evals/golden/golden.jsonl \
+  --function cshub-dev-query --out evals/results/phase1-final-records.jsonl
 
-# 2) score accuracy with the Bedrock LLM-judge (+ push to CloudWatch)
-AWS_PROFILE=agentcore AWS_REGION=us-east-1 \
-python evals/offline/score.py --records evals/results/records.jsonl \
-  --config baseline --out evals/results/baseline.json --emit-cloudwatch
+# 2) score with the Bedrock LLM-judge, joining real context from FI-6 spans (+ CloudWatch)
+AWS_PAGER="" AWS_PROFILE=agentcore AWS_REGION=us-east-1 \
+python3 evals/offline/score.py --records evals/results/phase1-final-records.jsonl \
+  --config phase1-final --out evals/results/phase1-final.json --minutes 40 --emit-cloudwatch
 ```
 
-Artifacts: `evals/results/records.jsonl` (raw pipeline outputs),
-`evals/results/baseline.json` (scores + per-example + system).
+Artifacts: `evals/results/phase1-final-records.jsonl`, `evals/results/phase1-final.json`.
 
 ---
 
@@ -169,15 +156,14 @@ Artifacts: `evals/results/records.jsonl` (raw pipeline outputs),
 
 | | Faithfulness | Answer rel. | Context prec. | Context recall | p95 latency |
 |---|---|---|---|---|---|
-| **Iteration 1 (baseline, dense-only)** | 0.984 | 0.976 | 0.940 | 0.947 | 7,046 ms |
+| **Phase-1 baseline (dense-only, in-corpus 58)** | 0.969 | 0.930 | 0.849 | 0.845 | 7,591 ms |
+| **Phase-1 baseline (all 61 incl. OOC)** | 0.938 | 0.884 | 0.811 | 0.818 | 7,591 ms |
 
-**Phase-3 goal:** enable advanced stages one at a time (hybrid+RRF → rerank → query-transform
-→ Chain-of-Note → CRAG), re-run this exact harness, and record the **delta per stage**. Keep a
-stage only if its accuracy gain justifies its latency/cost. Iteration 2 will report those
-deltas against this table.
+**Phase-2 goal:** enable all advanced stages at once (hybrid + rerank@k=10 + query-transform +
+Chain-of-Note + CRAG + FI-3 metadata filter), re-run this exact harness on the same corpus and
+golden set, and record the **delta** — especially context precision/recall on the §6 targets and
+`iam-config-001` (FI-5), while quantifying the latency/cost the advanced path adds.
 
-> Because accuracy is already very high on this small, clean corpus, the clearest Phase-3
-> wins will likely show up on (a) the lowest-scoring examples in §6, (b) context precision/
-> recall as the corpus grows, and (c) latency if a lighter path is chosen. A realistic
-> expectation: advanced RAG's value becomes visible as corpus size and query difficulty
-> increase — this baseline is the honest starting line to measure that from.
+> Because faithfulness is already high, the clearest Phase-2 wins should show up in **context
+> precision/recall** on the new-PDF + multi-service surfaces in §6, in **FI-5 recovery**, and in
+> CRAG behavior on out-of-corpus queries. Latency is the cost side of the ledger.

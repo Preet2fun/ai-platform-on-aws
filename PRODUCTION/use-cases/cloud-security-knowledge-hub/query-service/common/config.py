@@ -47,6 +47,10 @@ class Settings:
     enable_query_transform: bool = _flag("ENABLE_QUERY_TRANSFORM")
     enable_chain_of_note: bool = _flag("ENABLE_CHAIN_OF_NOTE")
     enable_crag: bool = _flag("ENABLE_CRAG")
+    # Metadata filtering (Phase-2 / FI-3): when a query names an AWS service, restrict retrieval
+    # to chunks tagged with that service so the answer chunk isn't crowded out by a large
+    # multi-service doc. Non-fatal: falls back to unfiltered if too few filtered candidates.
+    enable_metadata_filter: bool = _flag("ENABLE_METADATA_FILTER")
 
     @property
     def guardrails_enabled(self) -> bool:

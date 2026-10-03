@@ -85,7 +85,9 @@ def _judge(client, prompt: str) -> float:
             m = re.search(r"[01](?:\.\d+)?", txt)
             return max(0.0, min(1.0, float(m.group(0)))) if m else 0.0
         except Exception as e:  # noqa: BLE001
-            if "Throttl" in str(e) and attempt < 5:
+            transient = ("Throttl" in str(e) or "InternalServerException" in str(e)
+                         or "ServiceUnavailable" in str(e) or "ModelError" in str(e))
+            if transient and attempt < 5:
                 _t.sleep(2 ** attempt)  # 1,2,4,8,16s backoff
                 continue
             raise

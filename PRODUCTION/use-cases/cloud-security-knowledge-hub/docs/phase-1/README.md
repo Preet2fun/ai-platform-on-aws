@@ -64,3 +64,47 @@ KMS/duplicate artifacts:
 > drift** because those metrics only refresh when an ingestion pipeline runs, and the cleanup
 > was out-of-band. The **337 / 19** figures above are the true post-cleanup state. See
 > `04-observability.md` §D.1.
+
+## ENLARGED corpus (final Phase-1-vs-Phase-2 re-test)
+Before the final head-to-head comparison, the corpus was **deliberately enlarged** so the
+Phase-2 features are tested against real breadth (multiple docs per service, multi-topic PDFs,
+and near-synonym filenames) rather than a thin small-corpus. This snapshot is the shared input
+for **both** the Phase-1 baseline and the Phase-2 all-on runs — ingestion is identical for both
+phases; only the *query-time* flags differ.
+
+| Metric | Phase-1 end | Enlarged (this re-test) |
+|---|---|---|
+| Documents | 19 | **30** (+11 new PDFs) |
+| Chunks | 337 | **534** |
+| Services covered | 17 | **17** |
+| Null-embedding rate | 0.0 | **0.0** |
+| Empty-chunk rate | 0.0 | **0.0** |
+
+**What was added (11 PDFs):** `security-best-practices`, `bucket-encryption`, `data-protection`,
+`microvms-security`, `data-protection-encryption`, `data-protection-summary`,
+`security-iam-service-with-iam`, `overview-encryption`, `rds-ssl-tls-encrypt-connection`,
+`eks-security-best-practices`, `eks-pod-security`. They skew the corpus toward
+**encryption / data-protection / EKS / RDS-TLS**, which is where the new golden pairs focus.
+
+**FI-3 applied to the whole corpus (per-chunk service tagging).** After deploying the FI-3 fix,
+all 19 pre-existing docs were **re-ingested in place** (same S3 keys → same `doc_id` → same
+`chunk_id`s → `ON CONFLICT DO UPDATE`, so no duplication; corpus stayed at 534). This re-tagged
+every chunk with a service classified from *its own text* instead of one clobbered per-doc tag.
+
+Proof (from the chunk handler's ground-truth JSONL in the processed bucket, pre-DB-upsert):
+- **SRA** (`aws-security-reference-architecture-v4.pdf`) — its 306 chunks now span **19 distinct
+  services** (`iam 135 · s3 28 · ec2 25 · vpc 24 · config 15 · securityhub 14 · kms 12 · waf 12
+  · guardduty 11 · cloudtrail 8 · route53 6 · secretsmanager 4 · cognito 4 · lambda 3 · ebs 2 ·
+  eks 1 · cloudwatch 1 · apigateway 1 · rds 1`). Previously **all 307 were clobbered to `iam`** —
+  the exact cause of the FI-5 metadata-filter failure.
+- `data-protection.pdf` — correctly multi-service (`ec2, ebs, iam, cloudtrail, vpc`).
+- `security-iam-service-with-iam.pdf` — correctly stays **all IAM** (genuinely single-service).
+- `iam-least-privilege.md` (the FI-5 target doc) — correctly `iam`.
+
+**Duplicate check across near-synonym docs:** the `data-protection*` / `*-encryption` family
+(57 chunks total) has **zero byte-identical chunks shared across docs** — similar filenames but
+genuinely distinct content, so the enlargement adds real coverage, not accidental duplicates.
+
+> The FI-3 metadata filter is **query-time gated** (`ENABLE_METADATA_FILTER`, default off). The
+> per-chunk tags above are a shared data-quality improvement; whether a query *uses* them to
+> filter is a Phase-2-only behavior. The Phase-1 dense path is byte-identical with the flag off.

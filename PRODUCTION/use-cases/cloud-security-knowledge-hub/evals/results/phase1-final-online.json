@@ -1,0 +1,177 @@
+{
+  "config": "phase1-final-online",
+  "ts": 1790601837,
+  "n": 13,
+  "quality": {
+    "faithfulness": 0.9554,
+    "answer_relevancy": 0.8731
+  },
+  "proxies": {
+    "n": 13,
+    "deflection_rate": 0.2308,
+    "guardrail_block_rate": 0.0,
+    "citation_coverage": 0.0,
+    "full_retrieval_rate": 1.0,
+    "avg_latency_ms": 0,
+    "p95_latency_ms": 0,
+    "grounded_on_real_context": "13/13"
+  },
+  "per_example": [
+    {
+      "request_id": "2a6c1d58-35d7-4b5a-8dd3-46763a5c95fd",
+      "question": "what is distance between texas and NYC ?",
+      "is_idk": true,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.0,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "5f40f6cc-601c-468b-a7a9-9858133198de",
+      "question": "Does GCP has any security rleted to encryption ?",
+      "is_idk": true,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.9,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "2e6f9318-1ca7-4df4-8666-ff9e235dadc4",
+      "question": "what are the diffrnet WAF option avaiable in Azure WAF ?",
+      "is_idk": true,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.9,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "c1d7420d-10b7-4175-b6f6-150b346d04f1",
+      "question": "Assume an attacker compromises an EC2 instance in a private subnet. Which AWS security controls can detect the compromise, prevent lateral movement, restrict access to other workloads, and help investigate the incident?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 0.92,
+      "answer_relevancy": 0.95,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "c10a5fac-707d-40ac-b648-424514194a92",
+      "question": "How can Amazon Inspector be used to continuously identify vulnerabilities in EC2 instances, ECR container images, and AWS Lambda functions, and how should critical findings be prioritized for remediation?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.95,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "481bbf81-ca10-4799-b1de-feea33ac8b37",
+      "question": "How should AWS Security Hub be configured to centrally monitor security findings from GuardDuty, Inspector, Macie, IAM Access Analyzer, and other AWS security services?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.95,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "7e6fda1e-efb2-4f16-b7f5-1cd5bd623b5a",
+      "question": "Which AWS services and configurations can help detect if an attacker has stolen an IAM user\u2019s access key and is using it from an unusual location or IP address?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 0.75,
+      "answer_relevancy": 0.85,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "fab4d610-7b6c-4ec3-b011-bee74c6733c9",
+      "question": "How can I detect and prevent accidental public exposure of sensitive data stored in Amazon S3 buckets?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 1.0,
+      "answer_relevancy": 1.0,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "ebbfe039-ea36-45e9-979a-df004f74944f",
+      "question": "How should I configure AWS IAM to follow least-privilege principles and prevent privilege-escalation attacks?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 0.95,
+      "answer_relevancy": 0.95,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "b245f7f5-f205-4673-bc56-a39578557a3b",
+      "question": "How can AWS Shield Advanced and AWS WAF work together to protect my SaaS application against DDoS attacks?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 0.95,
+      "answer_relevancy": 1.0,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "aebcf9bc-c952-41d0-b856-bdf1ae29c85a",
+      "question": "How can I configure Amazon GuardDuty, and what actions should be taken when GuardDuty detects a high-severity finding?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 0.95,
+      "answer_relevancy": 0.95,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "a7a6cf59-7301-4fce-ab97-d7458fe1538d",
+      "question": "Which AWS security services should I enable to detect suspicious activities, compromised credentials, cryptocurrency mining, and unusual API calls in my AWS environment?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 0.95,
+      "answer_relevancy": 1.0,
+      "faithfulness_basis": "retrieved_context"
+    },
+    {
+      "request_id": "b45d1a69-12de-441e-9e5b-3465315c2488",
+      "question": "How should I configure AWS WAF to protect a public-facing web application from SQL injection, XSS, bots, and common web attacks?",
+      "is_idk": false,
+      "blocked": null,
+      "citations": 0,
+      "retrieved": 6,
+      "latency_ms": 0,
+      "faithfulness": 0.95,
+      "answer_relevancy": 0.95,
+      "faithfulness_basis": "retrieved_context"
+    }
+  ]
+}

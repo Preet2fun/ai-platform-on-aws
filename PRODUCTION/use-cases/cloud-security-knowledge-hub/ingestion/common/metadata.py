@@ -83,6 +83,30 @@ def infer_service(text: str, source: str = "") -> str | None:
     return max(scores, key=scores.get)
 
 
+def _service_by_frequency(text: str) -> str | None:
+    """Most-mentioned service in `text` (canonical), or None. Body-only, no filename hint."""
+    low = (text or "").lower()
+    scores: dict[str, float] = {}
+    for svc in AWS_SERVICES:
+        hits = len(re.findall(rf"\b{re.escape(svc)}\b", low))
+        if hits > 0:
+            key = _canonical(svc)
+            scores[key] = scores.get(key, 0) + hits
+    return max(scores, key=scores.get) if scores else None
+
+
+def infer_chunk_service(chunk_text: str, source: str = "") -> str | None:
+    """Per-chunk service (FI-3): classify from the CHUNK's own text first.
+
+    Unlike `infer_service` (which trusts the filename first — right for whole-doc subject), a
+    chunk's service is whatever the chunk actually talks about. So we score the chunk body by
+    frequency; the filename is only a fallback when the body mentions no known service (e.g. a
+    short/heading chunk), which keeps single-topic docs sensible without letting a multi-service
+    doc's filename stamp every chunk.
+    """
+    return _service_by_frequency(chunk_text) or _service_in_source(source)
+
+
 def infer_topic(text: str) -> str | None:
     low = text.lower()
     scores = {t: sum(low.count(h) for h in hints) for t, hints in TOPIC_HINTS.items()}
@@ -109,4 +133,42 @@ def build_metadata(
     }
     if overrides:
         md.update({k: v for k, v in overrides.items() if v is not None})
+    return md
+
+
+# Doc-level fields a chunk should INHERIT from its document. `service` and `topic` are
+# deliberately EXCLUDED — those are classified per chunk from the chunk's own text (FI-3).
+_INHERITED_DOC_FIELDS = ("source", "title", "version", "sensitivity")
+
+
+def build_chunk_metadata(
+    *,
+    chunk_text: str,
+    doc_metadata: dict[str, Any],
+) -> dict[str, Any]:
+    """Per-chunk metadata (FI-3): classify `service`/`topic` from THIS chunk's own text,
+    inherit document-level fields (source/title/version/sensitivity) from `doc_metadata`.
+
+    Fixes the earlier clobber bug where the whole doc-level metadata (including its single
+    `service`) overrode every chunk's own inference — so a multi-service document (e.g. the
+    Security Reference Architecture) had all chunks tagged with one service, crowding retrieval.
+
+    NON-FATAL: if per-chunk classification yields nothing (or errors), fall back to the
+    doc-level `service`/`topic` so a chunk is never left worse off than before.
+    """
+    doc_metadata = doc_metadata or {}
+    source = doc_metadata.get("source", "") or ""
+    title = doc_metadata.get("title")
+    try:
+        # Classify from the chunk body first (a chunk's service = what the chunk discusses);
+        # filename is only a fallback for chunks that mention no known service. This is what
+        # lets a multi-service doc get accurate per-chunk services instead of one blanket tag.
+        chunk_service = infer_chunk_service(chunk_text, source=f"{source} {title or ''}")
+        chunk_topic = infer_topic(chunk_text)
+    except Exception:  # noqa: BLE001 - classification must never break ingestion
+        chunk_service, chunk_topic = None, None
+
+    md: dict[str, Any] = {k: doc_metadata.get(k) for k in _INHERITED_DOC_FIELDS}
+    md["service"] = chunk_service or doc_metadata.get("service")   # per-chunk wins; doc fallback
+    md["topic"] = chunk_topic or doc_metadata.get("topic")
     return md

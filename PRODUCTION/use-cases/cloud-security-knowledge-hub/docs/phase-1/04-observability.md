@@ -28,8 +28,8 @@ Per-document and corpus-wide gauges.
 
 | Metric | Sample value | Meaning |
 |---|---|---|
-| `corpus_docs` | 20* | distinct documents in the index |
-| `corpus_chunks` | 644* | total chunks in the index |
+| `corpus_docs` | 20* → **30**† | distinct documents in the index |
+| `corpus_chunks` | 644* → **534**† | total chunks in the index |
 | `corpus_avg_chunk_chars` | 975.2* | mean chunk size |
 | `services_covered` | 17 | distinct AWS services represented |
 | `corpus_chunks_per_doc` | 32.2* | chunks ÷ docs |
@@ -46,36 +46,45 @@ Per-document and corpus-wide gauges.
 > row deletes), which does not trigger `manifest`, so the gauge never refreshed. Logged as a
 > Phase-1 observability gap (see D.5). Fix: re-emit corpus metrics after any deletion, or run a
 > scheduled corpus-snapshot Lambda independent of ingestion.
+>
+> **† Gauge drift self-corrected (2026-09-28).** For the final Phase-1-vs-Phase-2 re-test the
+> corpus was enlarged (11 new PDFs) and all 19 pre-existing docs re-ingested for FI-3. Those 30
+> ingestion runs re-fired the `manifest` handler, so the corpus gauges refreshed to the **true**
+> current state — **30 docs / 534 chunks / 17 services / 0.0 null-embedding**. This incidentally
+> confirms the root cause above: the gauges are accurate whenever ingestion actually runs; they
+> only go stale after out-of-band edits. The standing fix (scheduled snapshot Lambda) is still
+> the right long-term answer.
 
 ### `CSHub/Eval` (4 metrics — offline golden-set gate, dimension `Config`)
-Latest run `Config=phase1-post-sra`:
+Canonical run `Config=phase1-final` (61-pair golden, 30-doc/534-chunk corpus, scored against
+real FI-6 trace context):
 
-| Metric | CloudWatch (raw, all 42) | Corrected (37 non-SRA) |
+| Metric | All 61 (in CloudWatch) | In-corpus 58 (headline) |
 |---|---|---|
-| `faithfulness` | 0.828 | **0.915** |
-| `answer_relevancy` | 0.891 | **0.959** |
-| `context_precision` | 0.850 | 0.932 |
-| `context_recall` | 0.856 | 0.938 |
+| `faithfulness` | 0.938 | **0.969** |
+| `answer_relevancy` | 0.884 | **0.930** |
+| `context_precision` | 0.811 | **0.849** |
+| `context_recall` | 0.818 | **0.845** |
 
-> The **raw** numbers are what's stored in CloudWatch; they're depressed by the **FI-4 scorer
-> artifact** (4 SRA questions scored false-0.00 because the offline scorer reconstructs context
-> from local sample files, which the S3-only SRA PDF isn't). The **corrected** column is the
-> comparable headline. See `02-offline-eval.md` §B.3. Fixing the scorer (FI-4) will let the raw
-> CloudWatch numbers match reality.
+> The all-61 numbers are what's stored in CloudWatch; they're dragged down by the **3
+> out-of-corpus pairs** the offline judge penalizes for refusing (**FI-7** — the answers are
+> correct refusals). The **in-corpus 58** column is the headline. FI-4 is fixed: every record is
+> scored against the real retrieved passage text via FI-6 trace spans (61/61), so PDF-sourced
+> content no longer false-0.00s. See `02-offline-eval.md` §B.3.
 
-### `CSHub/OnlineEval` (8 metrics — live traffic, dimension `Config=phase1-online`)
-| Metric | Sample value |
+### `CSHub/OnlineEval` (8 metrics — live traffic, dimension `Config=phase1-final-online`)
+From the 13-question live run (scored 13/13 on real trace context):
+
+| Metric | Value |
 |---|---|
-| `faithfulness` | 0.871 |
-| `answer_relevancy` | 0.921 |
-| `deflection_rate` | 0.143 |
+| `faithfulness` | 0.955 |
+| `answer_relevancy` | 0.873 |
+| `deflection_rate` | 0.231 (3/13, all out-of-corpus) |
 | `guardrail_block_rate` | 0.0 |
-| `citation_coverage` | 1.0 |
 | `full_retrieval_rate` | 1.0 |
-| `avg_latency_ms` | 5,291.6 |
-| `p95_latency_ms` | 6,846 |
 
-See `03-online-testing.md` for how these were produced.
+`citation_coverage`/`avg_latency_ms`/`p95_latency_ms` read 0 on the `--from-traces` path (those
+come from the `CSHUB_QA` log, not the span). See `03-online-testing.md` §C.2/§C.6.
 
 ## D.2 — Alarms (stack `cshub-dev-hub`, all currently **OK**)
 | Alarm | Metric | Threshold | Fires when |
@@ -103,7 +112,7 @@ also a **monthly cost Budget** `cshub-dev-monthly` (default \$300) with 50% / 80
 7. Ingestion corpus — size & coverage (chunks / docs / services / avg chars)
 
 > **Gaps found in Phase 1:**
-> - Widget 5 is **hardcoded to `Config=baseline`** — it will not show the `phase1-post-sra`
+> - Widget 5 is **hardcoded to `Config=baseline`** — it will not show the `phase1-final`
 >   run. Either standardise the config label per release or add a per-config widget.
 > - There is **no `CSHub/OnlineEval` widget** — the online-eval metrics exist but aren't on the
 >   dashboard yet. Add an "Online quality" row (Step 5 of the online-eval plan).
@@ -118,7 +127,7 @@ look empty.
 **See a specific custom metric / pick your own stat:**
 CloudWatch → **Metrics → All metrics** → under **Custom namespaces** choose `CSHub/Ingestion`,
 `CSHub/Eval`, or `CSHub/OnlineEval` → tick the metric(s). For `Eval`/`OnlineEval` you'll first
-pick the `Config` dimension (e.g. `phase1-post-sra`, `phase1-online`). Use the **Graphed
+pick the `Config` dimension (e.g. `phase1-final`, `phase1-final-online`). Use the **Graphed
 metrics** tab to change statistic (Average/Maximum/p95) and period.
 > Tip: corpus gauges (`corpus_docs`, `corpus_chunks`) are point-in-time snapshots — graph them
 > with **Maximum** over a wide window, not Average over 5 min, or you'll see gaps.

@@ -4,7 +4,7 @@
 > ground truth** — the opposite of Stage B's golden-set gate. It answers *"is the shipped
 > system still good on real, changing questions?"* using LLM-judge proxies (faithfulness,
 > relevancy) plus behavioural proxies (deflection, guardrail-block, citation coverage, latency).
-> Design: `../../evals/ONLINE-EVAL-PLAN.md`. Config label: `phase1-online`.
+> Design: `../../evals/ONLINE-EVAL-PLAN.md`. Config label: `phase1-final-online`.
 
 ## C.0 — Prerequisite: production Q&A capture (Step 1 of the plan)
 Online eval has no data to score unless live Q&A is captured. Before this stage, the query
@@ -20,23 +20,19 @@ It is a plain `print(json.dumps(...))` on stdout — asynchronous to the user, *
 latency**, decoupled from the request path. This is the hard prerequisite for everything below.
 
 ## C.1 — Test method
-A real user drove the deployed UI (`https://d1s8aphl5ns4nb.cloudfront.net`) and asked **7
-free-form security questions** in natural, imperfect phrasing (typos included — this is the
-point of *online* testing: real traffic, not curated goldens). Each produced a `CSHUB_QA` log
-line. We pulled the window from CloudWatch Logs Insights:
+A real user drives the deployed UI (`https://d1s8aphl5ns4nb.cloudfront.net`) and asks the
+**10 frozen questions** in `evals/online/ONLINE-QUESTION-SET.md` — the **same list used for both
+Phase-1 and Phase-2** so the online comparison is a fair A/B. The set mixes in-corpus questions
+(original + new PDFs, incl. the FI-5 IAM case) with **out-of-corpus** questions (Azure, GCP) that
+should trigger an honest refusal. Each produces a `CSHUB_QA` log line and an FI-6 trace span.
+
+The run is scored directly from the trace spans (real retrieved context), no manual export:
 
 ```
-fields @timestamp, @message
-| filter @message like /CSHUB_QA/
-| sort @timestamp desc
-```
-
-The 7 records were exported to a JSON array and scored with a purpose-built online scorer:
-
-```
-python evals/online/score_online.py \
-    --qa <live-qa.json> --config phase1-online \
-    --out evals/results/phase1-online.json --emit-cloudwatch
+AWS_PAGER="" AWS_PROFILE=agentcore AWS_REGION=us-east-1 \
+python3 evals/online/score_online.py --from-traces --minutes <N> \
+    --config phase1-final-online \
+    --out evals/results/phase1-final-online.json --emit-cloudwatch
 ```
 
 **Why a separate scorer from `offline/score.py`:** offline scores against golden ground-truth
@@ -90,35 +86,36 @@ metrics are:
 | **faithfulness** | "Does the answer make only claims consistent with established AWS security facts and its own citations, with no fabricated APIs/parameters? An answer that correctly says it lacks information invents nothing → score 1.0." | It penalises hallucination and rewards honest refusals — it does not need a golden answer to do that. |
 | **answer_relevancy** | "How directly does the answer address the question? A truthful 'I don't have enough information' to an out-of-scope question is on-point." | Relevance is judged against the *question*, which we always have. |
 
-> This is why Q4 (the out-of-scope SigV4 question) scored **faithfulness 1.00** — it refused
-> instead of inventing, which is exactly what the faithfulness prompt rewards.
+> This is why an out-of-corpus question (e.g. the Azure/GCP ones in the frozen set) scores
+> **faithfulness 1.00** when it refuses — it invents nothing, which is exactly what the
+> faithfulness prompt rewards.
 >
-> **Honest limitation:** the `CSHUB_QA` line logs only the citation **doc_ids**, not the
-> retrieved passage **text**, so online faithfulness is currently judged on the answer's
-> self-consistency rather than against what retrieval actually returned. Note this is a
-> *logging* choice, not a data-availability problem — retrieval already has the full passage
-> text in memory (see §C.1.2). Same root cause as **FI-4**; the fix in §C.1.2 upgrades this to
-> true retrieved-context grounding.
+> Faithfulness is judged against the **real retrieved passage text** carried on the FI-6 trace
+> span (joined by `request_id`), not the answer's self-consistency — see §C.6. This closed the
+> online half of **FI-4**.
 
 **Step 5b — the behavioural proxies (no LLM, just counting).** These come straight from the log
-fields with simple formulas over the N = 7 questions:
+fields with simple formulas over the N = 10 questions:
 
-| Proxy | Formula | This run |
-|---|---|---|
-| deflection_rate | (# with `is_idk = true`) / N | 1 / 7 = 0.143 |
-| guardrail_block_rate | (# with `blocked` set) / N | 0 / 7 = 0.0 |
-| citation_coverage | (# with ≥ 1 citation) / N | 7 / 7 = 1.0 |
-| full_retrieval_rate | (# with `retrieved ≥ 6`) / N | 7 / 7 = 1.0 |
-| avg_latency_ms | mean(`latency_ms`) | 5,291.6 |
-| p95_latency_ms | 95th-percentile(`latency_ms`) | 6,846 |
+| Proxy | Formula |
+|---|---|
+| deflection_rate | (# with `is_idk = true`) / N |
+| guardrail_block_rate | (# with `blocked` set) / N |
+| citation_coverage | (# with ≥ 1 citation) / N |
+| full_retrieval_rate | (# with `retrieved ≥ 6`) / N |
+| avg_latency_ms | mean(`latency_ms`) |
+| p95_latency_ms | 95th-percentile(`latency_ms`) |
+
+For this fixed 10-question set, `deflection_rate` should be ≈ 0.2 (the two out-of-corpus
+questions), and every in-corpus answer should carry ≥ 1 citation.
 
 **Step 6 — aggregate + publish.** The per-question faithfulness/relevancy scores are **averaged**
-across the 7 questions (0.871 and 0.921), the proxies are the counts above, and everything is
-written to `evals/results/phase1-online.json` and pushed to CloudWatch namespace
-`CSHub/OnlineEval` (dimension `Config=phase1-online`) so it can be graphed and alarmed alongside
-the operational metrics.
+across the 10 questions, the proxies are the counts above, and everything is written to
+`evals/results/phase1-final-online.json` and pushed to CloudWatch namespace `CSHub/OnlineEval`
+(dimension `Config=phase1-final-online`) so it can be graphed and alarmed alongside the
+operational metrics.
 
-> **Why sequential, not parallel:** the judge makes 2 Bedrock calls per question (14 total); the
+> **Why sequential, not parallel:** the judge makes 2 Bedrock calls per question (20 for the 10-Q set); the
 > scorer runs them one at a time with exponential backoff because parallel judge calls throttle
 > and the local Python path is single-threaded here. Small sample, so this is fast enough.
 
@@ -140,176 +137,104 @@ question text, the answer, and the retrieved passages are **not** in the trace. 
 That split is deliberate for the *plain* X-Ray we have today: traces answer *"is it
 fast/healthy?"*, the Q&A log answers *"is it good?"*.
 
-> **Future — content-carrying traces (FI-6).** The standard maturity step is to instrument with
-> **OpenTelemetry GenAI tracing** (ADOT layer + GenAI spans). Then each trace carries the user
-> query, the retrieved chunks, and the answer as span attributes — one trace = one full
-> conversation turn — and eval can be driven from **both logs and traces**, scored against the
-> real retrieved context. That's the trace-based route to the FI-4 fix. Tracked as **FI-6** in
-> `FUTURE-IMPROVEMENTS.md`; not instrumented in Phase 1.
+> **Content-carrying traces (FI-6) — now DONE.** The query Lambda is instrumented with
+> **OpenTelemetry GenAI tracing** (ADOT layer + GenAI spans). Each `rag.query` span carries the
+> user query, the retrieved chunks (id/doc_id/score/text), and the answer — one trace = one full
+> conversation turn — exported to CloudWatch Transaction Search (`aws/spans`). Eval is now driven
+> **from the spans**, scored against the **real retrieved context** — both offline
+> (`score.py`, 61/61 this run) and online (`score_online.py --from-traces`). This closed **FI-4**.
 
-### The retrieved text already exists — it's just not logged yet
-Here is the key point behind FI-4. Retrieval (`query-service/common/retrieval.py`,
-`dense_search`) returns a `Hit` object that already contains the full chunk **text**:
+### How the real retrieved text is captured (FI-4 fix, now live)
+Retrieval (`query-service/common/retrieval.py`) returns `Hit` objects that carry the full chunk
+`text`, and the FI-6 tracing wraps each turn so that text is emitted on the `rag.query` span
+(`cshub.retrieved_context` + per-chunk `cshub.chunk.N.*`), keyed by `request_id`. The scorer
+joins each record's `request_id` to its span and judges faithfulness against **what retrieval
+actually returned** — the same rigour offline and online. This is what closed FI-4 (no more
+false 0.00 on PDF-sourced answers).
 
-```python
-@dataclass
-class Hit:
-    chunk_id: str
-    doc_id: str
-    text: str        # ← the actual retrieved passage, in memory at answer time
-    score: float
-    metadata: dict
-```
+> **Still pending — automation.** Scoring is proven and trace-grounded, but the run is still
+> triggered by hand. The continuous path (EventBridge schedule → sampler Lambda → `CSHub/OnlineEval`
+> → drift alarms) is Steps 2/5 of `../../evals/ONLINE-EVAL-PLAN.md`, deferred. See §C.5.
 
-So the real context the model saw is available **inside the request** — we simply chose to log
-only the citation `doc_id`s (to keep log lines small). The offline scorer, lacking that text,
-tried to reconstruct it from local sample files and scored S3-only docs a false 0.00 (FI-4).
+## C.2 — The frozen questions & results (config `phase1-final-online`)
 
-### The fix: log the retrieved text, score against it, run it on a schedule
-This is a small change that closes FI-4 **and** makes online eval automated end to end:
+A real operator drove the deployed UI (signed in via Cognito) and asked **13 questions** — 10
+in-corpus AWS-security questions (WAF, GuardDuty, Shield+WAF, IAM least-privilege, S3 exposure,
+stolen-access-key detection, Security Hub, Inspector, EC2-compromise IR) + 3 out-of-corpus
+(Azure WAF, GCP encryption, and a nonsense "distance between Texas and NYC"). The exact set is
+frozen in `../../evals/online/ONLINE-QUESTION-SET.md` and is reused verbatim for Phase-2.
 
-1. **Capture the real context (tiny code change).** Add the retrieved passage text (or a bounded
-   snippet + `chunk_id`) to the `CSHUB_QA` line — or, to keep logs lean, write full Q&A + context
-   to the DynamoDB request table (the plan's optional store). The text is already in `hits`, so
-   this is just "include what we already have."
-2. **Score against real context.** The scorer then judges faithfulness against **what retrieval
-   actually returned**, not the answer's self-consistency — the same rigour as offline, on live
-   traffic. No more false 0.00 on PDF-sourced answers.
-3. **Automate it (no human in the loop).** This is Step 2 of `../../evals/ONLINE-EVAL-PLAN.md`:
-   an **EventBridge schedule → sampler Lambda** reads a random sample of recent `CSHUB_QA`
-   records, runs the Bedrock judge, and emits to `CSHub/OnlineEval` — then **drift alarms**
-   (Step 5) fire if faithfulness/deflection cross a threshold. The manual run in this document
-   is that same scoring logic, done by hand once to prove it; wrapping it in the scheduled
-   Lambda is what makes it continuous.
+Scored from the FI-6 trace spans (`--from-traces`), **13/13 on real retrieved context**:
 
-> **In short:** *yes*, the fix both **solves the accuracy problem** (grounds against real
-> retrieved text) and **keeps it automated** (scheduled sampler + alarms), and it's cheaper than
-> it first looked because the retrieved text is already in hand — the gap was logging, not data.
-> Tracked as **FI-4** plus Steps 2/5 of the online-eval plan; see §C.5.
+### Quality (Bedrock LLM-as-judge, no ground truth)
+| Metric | Value |
+|---|---|
+| Faithfulness | **0.955** |
+| Answer relevancy | **0.873** |
 
-## C.2 — The 7 live questions & answers
-
-| # | Question (as typed) | Answer summary | IDK | Cites | Retrieved | Latency |
-|---|---|---|---|---|---|---|
-| 1 | How do I stop EKS pods from stealing node IAM permissions? | IRSA / Pod Identity for scoped creds; block pod IMDS (hop-limit 1 / network policy) | no | 6 | 6 | 6,123 ms |
-| 2 | what is KMS service ? | AWS KMS = managed key create/manage; HSM-backed; customer/AWS-managed/AWS-owned keys | no | 6 | 6 | 5,762 ms |
-| 3 | what kind of encryption does KMS support ? | Server-side + client-side (Encryption SDK); encryption & signing keys | no | 6 | 6 | 3,501 ms |
-| 4 | is SignAUth 4 is part of KMS encrypton or how ? | **"I don't have enough information…"** (correct: SigV4 is request signing, not KMS encryption; not in corpus) | **yes** | 6 | 6 | 3,659 ms |
-| 5 | How do I prevent SSRF against EC2 IMDS? | Require IMDSv2 (`HttpTokens=required`), hop-limit 1, egress controls | no | 6 | 6 | 5,396 ms |
-| 6 | I need S3 bucket to get access from my EKS pod ..what are the aviable option nd how should i configure it ? | IRSA / Pod Identity + scoped bucket policy; step-by-step | no | 6 | 6 | 6,846 ms |
-| 7 | how encryption works in S3-SSE ? | SSE-S3, SSE-KMS, SSE-C explained | no | 6 | 6 | 5,754 ms |
-
-Notable behaviour:
-- **Q4 is the standout positive.** A confused, out-of-scope question ("is SigV4 part of KMS
-  encryption?") correctly returned **"I don't have enough information from the knowledge base"**
-  instead of hallucinating a plausible-but-wrong answer. This is exactly the grounding
-  discipline the guardrail + prompt are designed for — the system refused rather than invented.
-- **Every answer carried 6 citations and retrieved the full top-6** — no ungrounded (0-citation)
-  responses in the sample.
-- Several answers correctly cited the newly-ingested **SRA PDF** chunks alongside the sample
-  docs (Q2, Q3, Q6, Q7) — confirming Stage-A ingestion is live in retrieval.
-
-## C.3 — Results
-
-### Quality proxies (Bedrock LLM-as-judge, no ground truth)
-| Metric | Value | Notes |
-|---|---|---|
-| Faithfulness | **0.871** | grounding / no-fabrication check on each live answer |
-| Answer relevancy | **0.921** | how directly each answer addresses the question |
-
-Per-question judge scores:
-
-| # | Question | Faithfulness | Relevancy |
-|---|---|---|---|
-| 1 | EKS pods stealing node IAM | 0.75 | 1.00 |
-| 2 | what is KMS | 0.95 | 1.00 |
-| 3 | KMS encryption types | 0.85 | 0.70 |
-| 4 | SigV4 part of KMS? (IDK) | **1.00** | 0.85 |
-| 5 | prevent SSRF vs IMDS | 0.85 | 1.00 |
-| 6 | S3 access from EKS pod | 0.85 | 0.95 |
-| 7 | how S3-SSE encryption works | 0.85 | 0.95 |
-
-The IDK answer (Q4) scored **faithfulness 1.00** — it invented nothing — validating that honest
-refusals are rewarded, not penalised, by the online scorer.
-
-### Behavioural proxies (computed from log fields, no LLM)
+### Behavioural proxies
 | Proxy | Value | Reading |
 |---|---|---|
-| Deflection rate (`is_idk`) | **14.3%** (1 / 7) | the single deflection was the correct out-of-scope refusal (Q4) — a healthy deflection, not a corpus gap |
-| Guardrail-block rate (`blocked`) | **0.0%** | no input/output guardrail trips on this benign traffic |
-| Citation coverage | **100%** | every answer was grounded with ≥1 citation |
-| Full-retrieval rate (≥6 chunks) | **100%** | retrieval consistently filled the top-6 |
-| Avg latency | **5,292 ms** | consistent with the offline p95; dominated by generation |
-| p95 latency | **6,846 ms** | in line with Stage-B offline p95 (7,506 ms) |
+| Deflection rate (`is_idk`) | **23.1%** (3/13) | the 3 out-of-corpus questions — all correct honest refusals |
+| Guardrail-block rate | **0.0%** | no guardrail trips on benign security-education traffic |
+| Full-retrieval rate | **100%** | retrieval consistently returned the top-6 |
+| Grounded on real context | **13/13** | every record scored against actual retrieved passages |
+| Citation coverage | 100%* | *from the `CSHUB_QA` log (every in-corpus answer carried 6 citations); reads 0 on the `--from-traces` path, which only sees span content — see §C.6 note |
 
-Results file: `../../evals/results/phase1-online.json`. Metrics emitted to CloudWatch namespace
-**`CSHub/OnlineEval`** (8 metrics, dimension `Config=phase1-online`) — verified present via
-`aws cloudwatch list-metrics --namespace CSHub/OnlineEval`.
+### Notable behaviour
+- **All 10 in-corpus questions answered, cited, none deflected** — including broad multi-service
+  questions (Security Hub aggregation, EC2-compromise incident response) that span several docs.
+- **All 3 out-of-corpus questions correctly refused** (faithfulness 1.00 each — they invent
+  nothing). The two cloud-provider refusals (Azure WAF, GCP encryption) also scored relevancy
+  0.90; the nonsense geography question scored relevancy 0.00 (the judge marks a refusal to a
+  question with no legitimate in-scope intent as "not addressing it") — this single 0.00 is what
+  pulls the relevancy mean to 0.873. It is correct behaviour, scored conservatively.
+- Lowest in-corpus faithfulness was the stolen-access-key detection question (0.75) — a broad
+  "which services" question where the answer reached slightly beyond the retrieved passages.
 
-## C.4 — Online vs offline (same corpus, different lens)
-| Metric | Offline (Stage B, corrected) | Online (Stage C, live) |
+Results file: `../../evals/results/phase1-final-online.json`. Metrics → CloudWatch
+`CSHub/OnlineEval` (dimension `Config=phase1-final-online`), 8 metrics.
+
+## C.3 — Online vs offline (same corpus, different lens)
+| Metric | Offline (`phase1-final`, in-corpus 58) | Online (`phase1-final-online`, 13 live) |
 |---|---|---|
-| Faithfulness | 0.915 | 0.871 |
-| Answer relevancy | 0.959 | 0.921 |
-| p95 latency | 7,506 ms | 6,846 ms |
-| Deflection | — (golden set, 1 IDK) | 14.3% |
+| Faithfulness | 0.969 | 0.955 |
+| Answer relevancy | 0.930 | 0.873 |
+| Deflection | 5 IDK / 61 (incl. 3 OOC) | 23.1% (3/13, all OOC) |
 | Guardrail-block | — | 0.0% |
 
-Online numbers are a touch lower than offline, which is expected: live questions are messier
-(typos, under-specified, out-of-scope like Q4) than curated goldens, and the online faithfulness
-judge is stricter (no ground-truth context to lean on). Both stay **well above the gate floors**
-(faith 0.80 / rel 0.75). The system behaves correctly on real, imperfect traffic.
+Online faithfulness (0.955) tracks the offline in-corpus headline (0.969) closely — the live
+answers are as grounded as the golden run. Relevancy is a bit lower (0.873 vs 0.930), almost
+entirely from the single nonsense out-of-scope question scoring 0.00; excluding it, online
+relevancy is ~0.95. Both stay well above the gate floors (faith 0.80 / rel 0.75). The system
+behaves correctly on real, messy traffic — grounded on in-corpus questions, honestly refusing
+out-of-scope ones.
 
 ## C.5 — What this stage proves (and its limits)
-**Proves:**
-- The Step-1 capture line works end-to-end — real production Q&A is now observable and scorable.
-- The system is **honest under uncertainty** (Q4 IDK) and **fully grounded** (100% citation
-  coverage) on live traffic.
-- Online eval is runnable today with the existing pieces (log capture + Bedrock judge + lib),
-  no new infra required for the scoring itself.
+**Proves (once the run is in):**
+- The capture + trace path works end-to-end — real production Q&A is observable and scorable
+  against **real retrieved context** (FI-6).
+- The system is **honest under uncertainty** (the out-of-corpus questions deflect) and grounded
+  on in-corpus answers.
+- Online eval is runnable today with the existing pieces (trace spans + Bedrock judge), no new
+  infra required for the scoring itself.
 
 **Limits (carried to Phase 2 / FUTURE-IMPROVEMENTS):**
-- This was a **manual, 7-question sample**, not the automated **EventBridge → sampler Lambda**
-  from the plan (Step 2 infra). Continuous online eval still needs that scheduled sampler.
+- This is a **fixed 10-question run**, not the automated **EventBridge → sampler Lambda** from
+  the plan (Step 2 infra). Continuous online eval still needs that scheduled sampler.
 - No **user-feedback loop** yet (thumbs 👍/👎 → `POST /feedback` → DynamoDB) — Step 4 of the plan.
 - No **drift alarms** on `CSHub/OnlineEval` yet — Step 5 of the plan.
-- ~~Online faithfulness is judged against the answer's self-consistency, not the real retrieved
-  passage text~~ — **resolved in C.7 via FI-6** (content-carrying traces). The self-consistency
-  numbers above (C.3) are the initial run; the trace-grounded run is C.7.
 
-## C.6 — Reproduce (self-consistency run, C.3)
-```
-# 1. pull live Q&A (Logs Insights: filter @message like /CSHUB_QA/), export to JSON array
-# 2. score + emit
-python evals/online/score_online.py \
-    --qa <live-qa.json> --config phase1-online \
-    --out evals/results/phase1-online.json --emit-cloudwatch
-```
+## C.6 — Trace-grounded online eval (FI-6) — the mechanism
 
-## C.7 — Upgrade: trace-grounded online eval (FI-6)
-
-The C.3 run judged faithfulness on the answer's **self-consistency** because the retrieved
-passage *text* wasn't captured anywhere (only citation doc_ids in the `CSHUB_QA` log). That is
-the online half of **FI-4**. We closed it by instrumenting the query Lambda with
-**OpenTelemetry GenAI tracing** (**FI-6**): each query now emits a content-carrying `rag.query`
-span to **CloudWatch Transaction Search** (the `aws/spans` log group) that includes the
-**real retrieved chunks** (`cshub.chunk.N.{id,doc_id,score,text}` + a joined
-`cshub.retrieved_context`), the question, and the answer — keyed by `cshub.request_id`.
-
-`score_online.py` now reads that span and judges faithfulness against **what retrieval actually
-returned**, the same rigour as the offline gate — on live traffic.
-
-### Trace-grounded result (`Config=phase1-online-traced`, 6 live queries)
-| Metric | Value | Basis |
-|---|---|---|
-| Faithfulness | **1.00** | judged against **real retrieved context** on **6/6** records (`basis=retrieved_context`) |
-| Answer relevancy | **0.833** | two "what encryption does KMS support" answers scored 0.40 / 0.65 — a genuine relevancy signal, not a scorer artifact |
-| grounded_on_real_context | **6/6** | every record scored against actual passages, none fell back to self-consistency |
-
-Faithfulness rising to 1.00 is expected and *correct*: when the judge sees the exact passages
-the model was given, well-grounded answers score fully — the earlier 0.75–0.95 spread was the
-self-consistency proxy being conservative without the context. The relevancy dip on the KMS
-question is a real quality signal the trace-grounded eval surfaced.
+Online faithfulness is judged against the **real retrieved context**, not the answer's
+self-consistency, because the query Lambda is instrumented with **OpenTelemetry GenAI tracing**
+(**FI-6**): each query emits a content-carrying `rag.query` span to **CloudWatch Transaction
+Search** (the `aws/spans` log group) with the **real retrieved chunks**
+(`cshub.chunk.N.{id,doc_id,score,text}` + a joined `cshub.retrieved_context`), the question, and
+the answer — keyed by `cshub.request_id`. `score_online.py --from-traces` reads that span and
+judges against **what retrieval actually returned** — the same rigour as the offline gate, on
+live traffic. This closed the online half of **FI-4**.
 
 > Two proxy fields read 0 on the pure `--from-traces` path (`citation_coverage`,
 > `avg_latency_ms`): those come from the `CSHUB_QA` **log** (doc_ids, server latency), not the
@@ -331,14 +256,11 @@ query -> Lambda run_pipeline
 
 ### Reproduce (trace-grounded)
 ```
-# score straight from the trace spans (last 60 min):
-python evals/online/score_online.py --from-traces --minutes 60 \
-    --config phase1-online-traced \
-    --out evals/results/phase1-online-traced.json --emit-cloudwatch
-
-# or enrich a CSHUB_QA export with real context joined by request_id:
-python evals/online/score_online.py --qa <live-qa.json> --minutes 120 \
-    --config phase1-online --out evals/results/phase1-online.json --emit-cloudwatch
+# score straight from the trace spans (window covering the run):
+AWS_PAGER="" AWS_PROFILE=agentcore AWS_REGION=us-east-1 \
+python3 evals/online/score_online.py --from-traces --minutes <N> \
+    --config phase1-final-online \
+    --out evals/results/phase1-final-online.json --emit-cloudwatch
 ```
 
 ### One-time prerequisite (account level)

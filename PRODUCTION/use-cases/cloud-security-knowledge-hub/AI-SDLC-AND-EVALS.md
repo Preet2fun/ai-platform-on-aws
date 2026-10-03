@@ -153,8 +153,8 @@ differ, **this section wins.** Full detail with real numbers is in `docs/phase-1
 | Offline scorer | RAGAS library | **LLM-as-judge via Claude on Bedrock**, computing the same 4 metrics on 0–1 | RAGAS 0.2+ needs Python ≥3.9 + a heavy dep tree; the runtime here is py3.8. LLM-judge was already a listed layer (§4) and gives comparable, gate-feedable numbers. |
 | Runner shape | single `run_eval.py` | split `offline/collect.py` + `offline/score.py` + `online/score_online.py` | collect (query the live API) and score (judge) have different runtimes/creds; splitting lets us re-score without re-querying. |
 | Scoring concurrency | (unspecified) | **sequential**, with backoff | macOS py3.8 threads segfault on the boto3 path + Bedrock throttles under parallel judge calls. |
-| Golden set size | ~100–200 pairs (v1 target) | **42 pairs** (17 config / 13 attack / 12 prevention) | Phase-1 baseline set; grows via the flywheel (§8). Enough to gate, not yet the v1 target. |
-| Online eval | continuous EventBridge sampler + feedback UI + drift alarms | **manual 7-question run** through the online scorer; metrics emitted to `CSHub/OnlineEval` | the sampler/feedback/alarm infra (Steps 2/4/5 of `evals/ONLINE-EVAL-PLAN.md`) is deferred; the scoring logic and metric path are proven. |
+| Golden set size | ~100–200 pairs (v1 target) | **61 pairs** (24 config / 19 attack / 18 prevention, incl. 3 out-of-corpus) | Phase-1 baseline set on the full 30-doc corpus; grows via the flywheel (§8). Enough to gate, not yet the v1 target. |
+| Online eval | continuous EventBridge sampler + feedback UI + drift alarms | **fixed 10-question run** through the online scorer (same list for Phase-1 & Phase-2); metrics emitted to `CSHub/OnlineEval` | the sampler/feedback/alarm infra (Steps 2/4/5 of `evals/ONLINE-EVAL-PLAN.md`) is deferred; the scoring logic and metric path are proven. |
 | Q&A capture | Bedrock invocation logging | **structured `CSHUB_QA` log line** in the query Lambda | simpler, zero-latency, already in the request path; the online-eval prerequisite. |
 | Trace/content capture | (not planned in Phase 1) | **OpenTelemetry GenAI spans (FI-6)** — `rag.query` spans with question + retrieved chunk text + answer, exported to CloudWatch Transaction Search | added mid-run so online eval can score against **real retrieved context** (closes the online half of FI-4); the trace-eval foundation Phase 2 builds on. |
 | Large-PDF ingestion | Fargate branch for big docs | **not built** — large PDF (KMS, 2,213 chunks) exceeded the 900s Lambda path | Fargate deferred (FI-2); SRA PDF (307 chunks) ingested fine on Lambda. |
@@ -162,39 +162,46 @@ differ, **this section wins.** Full detail with real numbers is in `docs/phase-1
 
 ### 9.2 Phase-1 baseline numbers (the reference point §5 asks for)
 
-**Offline (golden-set gate, `phase1-post-sra`, 37 non-SRA comparable):**
-faithfulness **0.915** · answer_relevancy **0.959** · context_precision **0.932** ·
-context_recall **0.938** · p95 latency **7,506 ms**.
-(Raw all-42 numbers in CloudWatch are lower — depressed by the FI-4 scorer artifact; see
-`docs/phase-1/02-offline-eval.md`.)
+Canonical baseline: `phase1-final` on the full **30-doc / 534-chunk** corpus with the **61-pair**
+golden set, every record scored against **real retrieved context** (FI-6 spans, 61/61).
 
-**Online (live traffic, `phase1-online`, 7 questions):**
-faithfulness **0.871** · answer_relevancy **0.921** · deflection **14.3%** ·
-guardrail-block **0%** · citation coverage **100%** · avg latency **5,292 ms** ·
-p95 **6,846 ms**. See `docs/phase-1/03-online-testing.md`.
+**Offline (golden-set gate, `phase1-final`), in-corpus 58 (headline):**
+faithfulness **0.969** · answer_relevancy **0.930** · context_precision **0.849** ·
+context_recall **0.845** · p95 latency **7,591 ms** · avg **5,843 ms**.
+(All-61 incl. out-of-corpus: 0.938 / 0.884 / 0.811 / 0.818 — dragged down by the 3 OOC pairs the
+offline judge penalizes for refusing; see FI-7 and `docs/phase-1/02-offline-eval.md`.)
+
+**Online (live traffic, `phase1-final-online`, 13 questions, 13/13 on real trace context):**
+faithfulness **0.955** · answer_relevancy **0.873** · deflection **23.1%** (3/13, all
+out-of-corpus, correctly refused) · guardrail-block **0%**. Same 13 questions reused verbatim
+for Phase-2. See `docs/phase-1/03-online-testing.md`.
 
 These are the **reference points** every Phase-2 change is measured against.
 
 ### 9.3 Findings the run surfaced (drive Phase 2)
 
-Pipeline findings are tracked in `docs/phase-1/FUTURE-IMPROVEMENTS.md` (FI-1…FI-5); the
+Pipeline findings are tracked in `docs/phase-1/FUTURE-IMPROVEMENTS.md` (FI-1…FI-7); the
 headline for the eval story:
 
-- **FI-4 (scorer):** the offline scorer reconstructs context from **local sample files**, so
-  documents that live only in S3 (the SRA PDF) score a **false 0.00**. **Online half now fixed
-  via FI-6** — online faithfulness is judged against the real retrieved passage text carried on
-  the trace span. **Offline half still pending** (the golden-set batch scorer must capture
-  retrieved passages the same way).
-- **FI-6 (trace-eval, DONE):** the query Lambda now emits **OpenTelemetry GenAI spans**
-  (question + retrieved chunk text + answer) to CloudWatch Transaction Search;
-  `evals/online/score_online.py --from-traces` scores faithfulness against real retrieved
-  context (verified 6/6 grounded). Prerequisite: Transaction Search enabled + a logs resource
-  policy (one-time, account level). This is the per-conversation, retrieved-context-grounded
-  measurement foundation Phase 2's advanced-RAG A/B tests rely on.
-- **FI-5 (genuine regression):** `iam-config-001` passed ~1.0 at baseline and now deflects,
-  because 307 SRA IAM-heavy chunks crowd the top-6 of **dense-only** retrieval. This is the
-  concrete, measured motivation for **Phase 2 hybrid + rerank + larger top-K** — exactly the
+- **FI-4 (scorer, DONE):** the offline scorer now joins each record's `request_id` to its FI-6
+  trace span and scores against the **real retrieved passage text** (this run: 61/61 on
+  `trace_context`, no local-sample fallback). The old false-0.00-on-PDF artifact is resolved.
+- **FI-6 (trace-eval, DONE):** the query Lambda emits **OpenTelemetry GenAI spans** (question +
+  retrieved chunk text + answer) to CloudWatch Transaction Search; both `score.py` (offline) and
+  `score_online.py --from-traces` (online) score against real retrieved context. Prerequisite:
+  Transaction Search enabled + a logs resource policy (one-time, account level). This is the
+  per-conversation, retrieved-context-grounded foundation Phase 2's advanced-RAG A/B tests rely on.
+- **FI-3 (built, proven corpus-wide):** every chunk is now tagged with the service inferred from
+  its own text (the SRA doc spans 19 services instead of all-`iam`). The query-time metadata
+  filter that consumes these tags is gated (`ENABLE_METADATA_FILTER`, off in Phase-1) and
+  measured in Phase-2.
+- **FI-5 (retrieval gap):** on the full 30-doc corpus, `iam-config-001` answers but with context
+  recall only **0.30** at dense top-6 (the same recall gap appears on the new PDFs). This is the
+  concrete, measured motivation for **Phase 2 rerank + FI-3 metadata filter** — exactly the
   "measure what each stage contributes" loop this plan is built around.
+- **FI-7 (judge, pending):** the offline judge penalizes honest refusals, so out-of-corpus pairs
+  score near-zero despite refusing correctly; we report **in-corpus** as the headline and keep
+  the scorer identical across both phases so the delta stays fair.
 
 Observability gaps (visibility, not correctness) are in `docs/phase-1/04-observability.md` §D.6.
 
@@ -206,5 +213,5 @@ Observability gaps (visibility, not correctness) are in `docs/phase-1/04-observa
 | P1 Ingestion | text+PDF | ✅ text + native-text PDF on Lambda; ⏳ large-PDF Fargate branch (FI-2) |
 | P2 Baseline online | dense + guardrails + gen + UI | ✅ live (UI, Cognito, API, dense retrieval, Claude, guardrails) |
 | P3 Advanced RAG | hybrid→rerank→transform→CoN→CRAG | ⏳ Phase 2 (flags exist, all off) — FI-5 is the trigger |
-| P4 Golden set + continuous eval | 100–200 pairs, CI gate | ⏳ 42 pairs, local gate; CI + online sampler pending |
+| P4 Golden set + continuous eval | 100–200 pairs, CI gate | ⏳ 61 pairs, local gate; CI + online sampler pending |
 | P5 Hardening | least-priv, cost, video | ⏳ ongoing; video path not started |

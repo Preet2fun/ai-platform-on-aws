@@ -8,9 +8,9 @@ Measures the RAG system's quality so each change is quantified and gated (see
 
 | | **Phase 1 (as-run)** | **Phase 2 (planned)** | Why / what was missing |
 |---|---|---|---|
-| Offline eval | Golden set (42 pairs) → LLM-judge 4 metrics → gate | Per-stage delta tables (hybrid/rerank/CoN/CRAG) | Baseline is the reference every Phase-2 change is measured against. |
+| Offline eval | Golden set (61 pairs) → LLM-judge 4 metrics → gate | All-stages-on delta vs baseline (hybrid+rerank+CoN+CRAG+metadata filter) | Baseline `phase1-final` is the reference every Phase-2 change is measured against. |
 | Online eval | **Built + run** — LLM-judge + behavioural proxies on live traffic; **trace-grounded** via FI-6 | Automated **EventBridge sampler** + user-feedback (👍/👎) + drift alarms | Phase-1 was a manual run; continuous sampling/alarms are the Phase-2 infra (Steps 2/4/5 of `ONLINE-EVAL-PLAN.md`). |
-| Real retrieved context | Online scored against real context via trace spans (**FI-4 online half fixed**) | Fix **offline** FI-4 (score golden run vs real context, not local samples) | Offline batch scorer still reconstructs context from local samples → S3-only docs false-0.00. |
+| Real retrieved context | **Both** offline + online scored against real context via FI-6 trace spans (**FI-4 fully fixed**, 61/61) | — | The scorer joins each record's `request_id` to its span; no local-sample fallback. |
 | Ingestion quality | **Built + emitting** `CSHub/Ingestion` (14 metrics) + alarm | Per-chunk service tagging feeds retrieval eval (FI-3) | Was a plan placeholder; now live. |
 
 **Correction to older text below:** the golden set is now **42** human-reviewed pairs (not 38),
@@ -67,7 +67,7 @@ evals/
 │
 ├── golden/
 │   ├── SCHEMA.md           # golden-set field schema
-│   └── golden.jsonl        # 38 human-reviewed Q&A pairs (config/attack/prevention · 16 services)
+│   └── golden.jsonl        # 61 human-reviewed Q&A pairs (config/attack/prevention · 18 services · 3 out-of-corpus)
 │
 ├── tests/
 │   └── test_gate_and_report.py   # 7 offline unit tests for lib/
@@ -121,15 +121,17 @@ preserved in `_archive/run_eval.py` for when we run inside the VPC on py3.9+.
 
 ## Two-iteration measurement (the point of offline eval)
 
-1. **Iteration 1 (baseline, Phase-3 OFF):** `results/baseline.json` + `reports/ITERATION-1-BASELINE.md`.
-2. **Iteration 2 (Phase-3 advanced RAG):** enable one stage at a time, re-run the same two
-   scripts with `--config <stage>`, and use `lib/report.py` to show the per-stage delta vs the
-   baseline. Keep a stage only if its gain justifies its latency/cost.
+1. **Phase-1 baseline (advanced RAG OFF):** `results/phase1-final.json` +
+   `reports/ITERATION-1-BASELINE.md` — the canonical baseline (61-pair golden, 30-doc corpus).
+2. **Phase-2 (advanced RAG, all stages ON):** enable all stages together
+   (`--config phase2-final`), re-run the same two scripts, and use `lib/report.py` to show the
+   delta vs the baseline. Keep the configuration if its gain justifies its latency/cost.
 
 ## Golden dataset
 
-`golden/golden.jsonl` — 38 human-reviewed pairs across the three question types
-(configuration / attack / prevention) and all 16 corpus services. Schema in `golden/SCHEMA.md`.
+`golden/golden.jsonl` — 61 human-reviewed pairs across the three question types
+(configuration / attack / prevention), 18 corpus services, plus 3 out-of-corpus pairs (for
+refusal / CRAG measurement). Schema in `golden/SCHEMA.md`.
 
 ## Not yet built (roadmap)
 

@@ -67,6 +67,7 @@ class _Settings:
     enable_chain_of_note: bool = False
     enable_crag: bool = False
     crag_min_relevance: float = 0.30
+    enable_metadata_filter: bool = False
 
 
 def test_pipeline_baseline_happy_path(monkeypatch):
@@ -75,7 +76,7 @@ def test_pipeline_baseline_happy_path(monkeypatch):
                         lambda text, source: {"blocked": False, "text": text, "action": "NONE"})
     monkeypatch.setattr(app.bedrock, "embed_query", lambda q, dim=1024: [0.0] * dim)
     monkeypatch.setattr(app.retrieval, "dense_search",
-                        lambda vec, k: [Hit("c1", "d1", "ctx", 0.9, {"source": "s3.pdf"})])
+                        lambda vec, k, **kw: [Hit("c1", "d1", "ctx", 0.9, {"source": "s3.pdf"})])
     monkeypatch.setattr(app.bedrock, "generate", lambda prompt, **kw: "Configure it securely [1].")
 
     out = app.run_pipeline("How to secure S3?", s=_Settings())
@@ -107,7 +108,7 @@ def test_crag_short_circuits_to_idk_on_weak_context(monkeypatch):
                         lambda text, source: {"blocked": False, "text": text, "action": "NONE"})
     monkeypatch.setattr(app.bedrock, "embed_query", lambda q, dim=1024: [0.0] * dim)
     monkeypatch.setattr(app.retrieval, "dense_search",
-                        lambda vec, k: [Hit("c1", "d1", "ctx", 0.9, {"source": "x"})])
+                        lambda vec, k, **kw: [Hit("c1", "d1", "ctx", 0.9, {"source": "x"})])
     # reranker returns a LOW top relevance score -> CRAG should correct to IDK
     monkeypatch.setattr(app.bedrock, "rerank",
                         lambda q, hits, k, **kw: [Hit("c1", "d1", "ctx", 0.10, {"source": "x"})])
@@ -126,7 +127,7 @@ def test_crag_allows_answer_on_strong_context(monkeypatch):
                         lambda text, source: {"blocked": False, "text": text, "action": "NONE"})
     monkeypatch.setattr(app.bedrock, "embed_query", lambda q, dim=1024: [0.0] * dim)
     monkeypatch.setattr(app.retrieval, "dense_search",
-                        lambda vec, k: [Hit("c1", "d1", "ctx", 0.9, {"source": "x"})])
+                        lambda vec, k, **kw: [Hit("c1", "d1", "ctx", 0.9, {"source": "x"})])
     # strong top relevance -> CRAG passes, normal generation runs
     monkeypatch.setattr(app.bedrock, "rerank",
                         lambda q, hits, k, **kw: [Hit("c1", "d1", "ctx", 0.85, {"source": "x"})])

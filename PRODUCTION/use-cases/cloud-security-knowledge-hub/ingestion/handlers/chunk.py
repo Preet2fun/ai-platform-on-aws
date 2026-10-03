@@ -12,7 +12,7 @@ import json
 import os
 
 from common.chunking import chunk_text
-from common.metadata import build_metadata
+from common.metadata import build_metadata, build_chunk_metadata
 
 PROCESSED_BUCKET = os.getenv("PROCESSED_BUCKET", "")
 
@@ -28,8 +28,10 @@ def handler(event, _context=None):
 
     lines = []
     for c in chunks:
-        # enrich each chunk's metadata from its own text (service/topic can vary per chunk)
-        cm = build_metadata(source=event.get("source", ""), text_sample=c.text[:2000], overrides=doc_md)
+        # FI-3: classify service/topic from THIS chunk's own text; inherit doc-level fields
+        # (source/title/version/sensitivity). Fixes the prior clobber where the doc-level
+        # `service` overrode every chunk's own inference (multi-service docs mis-tagged).
+        cm = build_chunk_metadata(chunk_text=c.text, doc_metadata=doc_md)
         lines.append(json.dumps({
             "chunk_id": c.chunk_id, "doc_id": c.doc_id, "chunk_text": c.text,
             "ordinal": c.ordinal, "metadata": cm,
