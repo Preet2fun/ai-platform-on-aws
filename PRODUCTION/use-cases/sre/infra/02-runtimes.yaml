@@ -1,0 +1,224 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  SRE Agentic System - P1 Runtimes. Per-agent least-privilege IAM execution roles + AgentCore
+  Runtimes for the supervisor (HTTP), four specialists (A2A), and the synthetic tools backend
+  (HTTP in P1; fronted by the Gateway as MCP in P4). Image URIs are passed in after the ARM64
+  images are built and pushed to the 01-ecr.yaml repos.
+
+Parameters:
+  ProjectName: { Type: String, Default: sre-agentic }
+  EnvName:     { Type: String, Default: dev }
+  ModelId:
+    Type: String
+    Default: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+  SupervisorImageUri:   { Type: String }
+  InvestigatorImageUri: { Type: String }
+  TelemetryImageUri:    { Type: String }
+  ChangeImageUri:       { Type: String }
+  RemediationImageUri:  { Type: String }
+  ToolsImageUri:        { Type: String }
+  ToolsBaseUrl:
+    Type: String
+    Default: "http://localhost:8080"
+    Description: Base URL the specialists use to reach the tools backend (P4 replaces with the Gateway MCP URL).
+
+Resources:
+  # ---------- Shared managed policies ----------
+  RuntimeExecPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${ProjectName}-${EnvName}-runtime-exec"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ECRImageAccess
+            Effect: Allow
+            Action: [ "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer" ]
+            Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ProjectName}-${EnvName}-*"
+          - Sid: ECRToken
+            Effect: Allow
+            Action: [ "ecr:GetAuthorizationToken" ]
+            Resource: "*"
+          - Sid: Logs
+            Effect: Allow
+            Action: [ "logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams", "logs:DescribeLogGroups" ]
+            Resource:
+              - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*"
+          - Sid: XRay
+            Effect: Allow
+            Action: [ "xray:PutTraceSegments", "xray:PutTelemetryRecords", "xray:GetSamplingRules", "xray:GetSamplingTargets" ]
+            Resource: "*"
+          - Sid: CloudWatchMetrics
+            Effect: Allow
+            Action: "cloudwatch:PutMetricData"
+            Resource: "*"
+            Condition: { StringEquals: { "cloudwatch:namespace": "bedrock-agentcore" } }
+          - Sid: WorkloadToken
+            Effect: Allow
+            Action: [ "bedrock-agentcore:GetWorkloadAccessToken", "bedrock-agentcore:GetWorkloadAccessTokenForJWT" ]
+            Resource:
+              - !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default"
+              - !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/*"
+
+  BedrockInvokePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${ProjectName}-${EnvName}-bedrock-invoke"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: InvokeClaude
+            Effect: Allow
+            Action: [ "bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream" ]
+            Resource:
+              - "arn:aws:bedrock:*::foundation-model/anthropic.claude-*"
+              - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*claude*"
+
+  # ---------- Per-agent execution roles (one per runtime = isolation) ----------
+  # Agents that call Claude get BOTH policies; the tools backend gets only the runtime-exec policy.
+  SupervisorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${EnvName}-supervisor-role"
+      AssumeRolePolicyDocument: &acTrust
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: bedrock-agentcore.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { "aws:SourceAccount": !Ref "AWS::AccountId" }
+              ArnLike: { "aws:SourceArn": !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*" }
+      ManagedPolicyArns: [ !Ref RuntimeExecPolicy, !Ref BedrockInvokePolicy ]
+      Tags: [ { Key: component, Value: runtime }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
+
+  InvestigatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${EnvName}-investigator-role"
+      AssumeRolePolicyDocument: *acTrust
+      ManagedPolicyArns: [ !Ref RuntimeExecPolicy, !Ref BedrockInvokePolicy ]
+      Tags: [ { Key: component, Value: runtime }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
+
+  TelemetryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${EnvName}-telemetry-role"
+      AssumeRolePolicyDocument: *acTrust
+      ManagedPolicyArns: [ !Ref RuntimeExecPolicy, !Ref BedrockInvokePolicy ]
+      Tags: [ { Key: component, Value: runtime }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
+
+  ChangeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${EnvName}-change-role"
+      AssumeRolePolicyDocument: *acTrust
+      ManagedPolicyArns: [ !Ref RuntimeExecPolicy, !Ref BedrockInvokePolicy ]
+      Tags: [ { Key: component, Value: runtime }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
+
+  RemediationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${EnvName}-remediation-role"
+      AssumeRolePolicyDocument: *acTrust
+      ManagedPolicyArns: [ !Ref RuntimeExecPolicy, !Ref BedrockInvokePolicy ]
+      Tags: [ { Key: component, Value: runtime }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
+
+  ToolsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${EnvName}-tools-role"
+      AssumeRolePolicyDocument: *acTrust
+      ManagedPolicyArns: [ !Ref RuntimeExecPolicy ]   # tools backend does NOT call Bedrock
+      Tags: [ { Key: component, Value: gateway }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
+
+  # ---------- AgentCore Runtimes ----------
+  ToolsRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    Properties:
+      AgentRuntimeName: !Sub "${ProjectName}_${EnvName}_tools"
+      Description: Synthetic observability backends (metrics/logs/traces/changes/events/runbooks).
+      AgentRuntimeArtifact: { ContainerConfiguration: { ContainerUri: !Ref ToolsImageUri } }
+      NetworkConfiguration: { NetworkMode: PUBLIC }
+      ProtocolConfiguration: HTTP
+      RoleArn: !GetAtt ToolsRole.Arn
+      EnvironmentVariables:
+        SRE_SYNTH_DATA_ROOT: /app/synthetic-data/tenants
+      Tags: { component: gateway, env: !Ref EnvName, usecase: sre }
+
+  TelemetryRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    Properties:
+      AgentRuntimeName: !Sub "${ProjectName}_${EnvName}_telemetry"
+      Description: Telemetry specialist (A2A) - gathers metrics/logs/traces evidence.
+      AgentRuntimeArtifact: { ContainerConfiguration: { ContainerUri: !Ref TelemetryImageUri } }
+      NetworkConfiguration: { NetworkMode: PUBLIC }
+      ProtocolConfiguration: A2A
+      RoleArn: !GetAtt TelemetryRole.Arn
+      EnvironmentVariables: { MODEL_ID: !Ref ModelId, SRE_TOOLS_BASE_URL: !Ref ToolsBaseUrl, AWS_REGION: !Ref "AWS::Region" }
+      Tags: { component: runtime, env: !Ref EnvName, usecase: sre }
+
+  ChangeRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    Properties:
+      AgentRuntimeName: !Sub "${ProjectName}_${EnvName}_change"
+      Description: Change-correlation specialist (A2A) - correlates changes/events to the timeline.
+      AgentRuntimeArtifact: { ContainerConfiguration: { ContainerUri: !Ref ChangeImageUri } }
+      NetworkConfiguration: { NetworkMode: PUBLIC }
+      ProtocolConfiguration: A2A
+      RoleArn: !GetAtt ChangeRole.Arn
+      EnvironmentVariables: { MODEL_ID: !Ref ModelId, SRE_TOOLS_BASE_URL: !Ref ToolsBaseUrl, AWS_REGION: !Ref "AWS::Region" }
+      Tags: { component: runtime, env: !Ref EnvName, usecase: sre }
+
+  RemediationRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    Properties:
+      AgentRuntimeName: !Sub "${ProjectName}_${EnvName}_remediation"
+      Description: Remediation specialist (A2A) - proposes HITL-gated fixes. Never auto-applies.
+      AgentRuntimeArtifact: { ContainerConfiguration: { ContainerUri: !Ref RemediationImageUri } }
+      NetworkConfiguration: { NetworkMode: PUBLIC }
+      ProtocolConfiguration: A2A
+      RoleArn: !GetAtt RemediationRole.Arn
+      EnvironmentVariables: { MODEL_ID: !Ref ModelId, SRE_TOOLS_BASE_URL: !Ref ToolsBaseUrl, AWS_REGION: !Ref "AWS::Region" }
+      Tags: { component: runtime, env: !Ref EnvName, usecase: sre }
+
+  InvestigatorRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    Properties:
+      AgentRuntimeName: !Sub "${ProjectName}_${EnvName}_investigator"
+      Description: Investigator/hypothesis specialist (A2A) - hypothesis-driven RCA engine.
+      AgentRuntimeArtifact: { ContainerConfiguration: { ContainerUri: !Ref InvestigatorImageUri } }
+      NetworkConfiguration: { NetworkMode: PUBLIC }
+      ProtocolConfiguration: A2A
+      RoleArn: !GetAtt InvestigatorRole.Arn
+      EnvironmentVariables:
+        MODEL_ID: !Ref ModelId
+        SRE_TOOLS_BASE_URL: !Ref ToolsBaseUrl
+        AWS_REGION: !Ref "AWS::Region"
+        TELEMETRY_AGENT_URL: !GetAtt TelemetryRuntime.AgentRuntimeArn
+        CHANGE_AGENT_URL: !GetAtt ChangeRuntime.AgentRuntimeArn
+      Tags: { component: runtime, env: !Ref EnvName, usecase: sre }
+
+  SupervisorRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    Properties:
+      AgentRuntimeName: !Sub "${ProjectName}_${EnvName}_supervisor"
+      Description: Supervisor (HTTP) - entry point; orchestrates the investigation and remediation.
+      AgentRuntimeArtifact: { ContainerConfiguration: { ContainerUri: !Ref SupervisorImageUri } }
+      NetworkConfiguration: { NetworkMode: PUBLIC }
+      ProtocolConfiguration: HTTP
+      RoleArn: !GetAtt SupervisorRole.Arn
+      EnvironmentVariables:
+        MODEL_ID: !Ref ModelId
+        AWS_REGION: !Ref "AWS::Region"
+        INVESTIGATOR_AGENT_URL: !GetAtt InvestigatorRuntime.AgentRuntimeArn
+        REMEDIATION_AGENT_URL: !GetAtt RemediationRuntime.AgentRuntimeArn
+      Tags: { component: runtime, env: !Ref EnvName, usecase: sre }
+
+Outputs:
+  SupervisorRuntimeArn:   { Value: !GetAtt SupervisorRuntime.AgentRuntimeArn }
+  InvestigatorRuntimeArn: { Value: !GetAtt InvestigatorRuntime.AgentRuntimeArn }
+  TelemetryRuntimeArn:    { Value: !GetAtt TelemetryRuntime.AgentRuntimeArn }
+  ChangeRuntimeArn:       { Value: !GetAtt ChangeRuntime.AgentRuntimeArn }
+  RemediationRuntimeArn:  { Value: !GetAtt RemediationRuntime.AgentRuntimeArn }
+  ToolsRuntimeArn:        { Value: !GetAtt ToolsRuntime.AgentRuntimeArn }

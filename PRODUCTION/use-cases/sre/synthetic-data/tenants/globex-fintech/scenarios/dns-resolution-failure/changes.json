@@ -1,0 +1,4 @@
+[
+  {"ts": "2026-02-20T22:05:00Z", "type": "config", "service": "coredns", "summary": "CoreDNS Corefile change: switched to single upstream resolver 10.2.0.2 and lowered cache TTL 30s->5s", "actor": "platform-team", "ref": "chg/coredns/341"},
+  {"ts": "2026-02-20T15:00:00Z", "type": "deploy", "service": "payments-svc", "summary": "payments-svc v5.2.1 deployed earlier (healthy since; unrelated)", "actor": "ci-pipeline", "ref": "deploy/payments-svc/5210"}
+]

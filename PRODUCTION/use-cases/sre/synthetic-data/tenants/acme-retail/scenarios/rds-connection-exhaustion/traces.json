@@ -1,0 +1,26 @@
+[
+  {
+    "trace_id": "acme-chk-0014221",
+    "root_service": "checkout-api",
+    "duration_ms": 5042,
+    "ts": "2026-02-10T14:22:05Z",
+    "spans": [
+      {"service": "checkout-api", "op": "POST /checkout", "duration_ms": 5042, "error": true},
+      {"service": "checkout-api", "op": "call product-api /availability", "duration_ms": 5010, "error": true},
+      {"service": "product-api", "op": "GET /availability", "duration_ms": 5003, "error": true},
+      {"service": "product-api", "op": "db.acquire_connection(product-db)", "duration_ms": 5000, "error": true, "error_detail": "connection acquisition timeout; pool exhausted"},
+      {"service": "checkout-api", "op": "call payment-gateway /authorize", "duration_ms": 0, "error": false, "note": "not reached — failed before payment step"}
+    ]
+  },
+  {
+    "trace_id": "acme-chk-0014050",
+    "root_service": "checkout-api",
+    "duration_ms": 251,
+    "ts": "2026-02-10T14:05:10Z",
+    "spans": [
+      {"service": "checkout-api", "op": "POST /checkout", "duration_ms": 251, "error": false},
+      {"service": "product-api", "op": "GET /availability", "duration_ms": 61, "error": false},
+      {"service": "payment-gateway", "op": "POST /authorize", "duration_ms": 180, "error": false}
+    ]
+  }
+]

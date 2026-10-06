@@ -1,0 +1,4 @@
+[
+  {"ts": "2026-02-18T13:40:00Z", "type": "scaling", "service": "ledger-reconciler", "summary": "Batch reconciliation Job scheduled (CronJob fired); no CPU limit/request set; landed on node ip-10-2-3-44", "actor": "k8s-cronjob", "ref": "job/ledger-reconciler/9931"},
+  {"ts": "2026-02-18T07:00:00Z", "type": "deploy", "service": "auth-svc", "summary": "No deploy today; last auth-svc deploy was v4.6.0 three days ago", "actor": "n/a", "ref": "deploy/auth-svc/4600"}
+]

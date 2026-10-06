@@ -1,0 +1,4 @@
+[
+  {"ts": "2026-02-12T08:40:00Z", "type": "config", "service": "cache", "summary": "cache-warmer batch run: wrote ~12k catalog:* keys with fixed 60-min TTL (no jitter)", "actor": "cache-warmer-cron", "ref": "job/cache-warmer/5521"},
+  {"ts": "2026-02-11T20:00:00Z", "type": "deploy", "service": "web-storefront", "summary": "Deploy v3.1.0: homepage banner update (static assets only)", "actor": "ci-pipeline", "ref": "deploy/web-storefront/3100"}
+]

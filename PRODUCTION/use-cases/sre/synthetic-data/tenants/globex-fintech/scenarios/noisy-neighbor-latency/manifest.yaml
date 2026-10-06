@@ -1,0 +1,59 @@
+scenario_id: noisy-neighbor-latency
+tenant_id: globex-fintech
+title: "auth-svc latency spike — noisy neighbor saturating shared node"
+difficulty: hard
+tags: [kubernetes, noisy-neighbor, resource-contention, latency]
+
+alarm:
+  name: "auth-svc-latency-high"
+  service: auth-svc
+  metric: latency_p95_ms
+  threshold: "> 600ms for 5m"
+  fired_at: "2026-02-18T13:52:00Z"
+
+symptom_window:
+  start: "2026-02-18T13:30:00Z"
+  end:   "2026-02-18T14:15:00Z"
+
+ground_truth:
+  root_cause: >
+    A batch analytics job pod (ledger-reconciler, a different workload) was scheduled at 13:40
+    onto the same EKS node as two auth-svc pods and ran a CPU-bound reconciliation with no CPU
+    limit set. It saturated the node's CPU, starving the co-located auth-svc pods (CPU
+    throttling), which raised auth-svc p95 latency. auth-svc's own code, auth-db, and
+    token-cache are all healthy; the latency is caused by node-level CPU contention from a
+    noisy neighbor, not by auth-svc or its dependencies.
+  causal_chain:
+    - "13:40 ledger-reconciler batch pod scheduled on node ip-10-2-3-44 (shared with 2 auth-svc pods), no CPU limit"
+    - "13:42 node CPU saturates ~98%; auth-svc containers hit CPU throttling (cfs throttled periods climb)"
+    - "13:45 auth-svc p95 latency climbs on throttled pods only (pods on other nodes fine)"
+    - "13:52 auth-svc-latency-high alarm fires"
+  remediation: >
+    Evict/reschedule the ledger-reconciler batch job; set CPU limits/requests and a dedicated
+    node pool (or taints/anti-affinity) for batch workloads so they can't co-locate with
+    latency-sensitive services. Add node-level CPU saturation + pod CPU-throttling alarms.
+  evidence_keys:
+    - "metrics.json: node ip-10-2-3-44 CPU ~98%; auth-svc cpu_throttled_periods spike on that node only"
+    - "events.json: ledger-reconciler scheduled onto the shared node at 13:40"
+    - "logs.json: auth-svc CPU throttling; auth-db and token-cache healthy; per-pod latency split by node"
+
+expected_hypotheses:
+  - id: h1
+    statement: "noisy-neighbor CPU contention on the shared node (ledger-reconciler batch) is throttling auth-svc and raising its latency"
+    verdict: confirm
+  - id: h2
+    statement: "auth-db (Aurora) is slow and causing auth-svc latency"
+    verdict: reject
+    reject_reason: "auth-db query latency and connections are nominal; auth-svc latency is split by node (only pods on the saturated node are slow), which a DB slowdown wouldn't explain"
+  - id: h3
+    statement: "token-cache (Redis) degradation is the cause"
+    verdict: reject
+    reject_reason: "token-cache hit-rate and latency are normal; cache path is not implicated in the slow traces"
+  - id: h4
+    statement: "an auth-svc deploy introduced a regression"
+    verdict: reject
+    reject_reason: "no auth-svc deploy in the window; only the subset of auth-svc pods on the contended node are slow, which a code regression would affect uniformly"
+  - id: h5
+    statement: "a traffic surge to auth-svc caused the latency"
+    verdict: reject
+    reject_reason: "auth-svc request_rate is flat; latency is driven by CPU throttling from the co-located batch job, not load"

@@ -1,0 +1,60 @@
+scenario_id: dns-resolution-failure
+tenant_id: globex-fintech
+title: "payments-svc errors — DNS resolution failures to external payment-processor"
+difficulty: hard
+tags: [network, dns, external-dependency, intermittent]
+
+alarm:
+  name: "payments-svc-error-rate-high"
+  service: payments-svc
+  metric: error_rate
+  threshold: "> 3% for 5m"
+  fired_at: "2026-02-20T22:14:00Z"
+
+symptom_window:
+  start: "2026-02-20T21:55:00Z"
+  end:   "2026-02-20T22:35:00Z"
+
+ground_truth:
+  root_cause: >
+    A ConfigMap change at 22:05 pointed cluster DNS (CoreDNS) at a single upstream resolver
+    and reduced the DNS cache TTL. CoreDNS then intermittently failed to resolve the external
+    payment-processor hostname (api.processor.example) under load, so payments-svc calls to
+    the processor failed with name-resolution errors (not HTTP errors from the processor).
+    The processor endpoint itself is up; internal services are healthy. The fault is cluster
+    DNS resolution, triggered by the CoreDNS config change.
+  causal_chain:
+    - "22:05 CoreDNS ConfigMap change: single upstream resolver + lower cache TTL"
+    - "22:08 intermittent SERVFAIL/timeout resolving api.processor.example from pods"
+    - "22:10 payments-svc processor calls fail with 'name resolution failed' / 'no such host'"
+    - "22:14 payments-svc-error-rate-high alarm fires"
+  remediation: >
+    Revert the CoreDNS ConfigMap (restore multiple upstreams + prior cache TTL); add
+    NodeLocal DNSCache; add a DNS resolution-success-rate alarm and a synthetic check for the
+    processor hostname. Processor itself needs no change.
+  evidence_keys:
+    - "changes.json: CoreDNS ConfigMap change at 22:05"
+    - "logs.json: 'no such host' / 'name resolution failed' for api.processor.example; CoreDNS SERVFAIL"
+    - "metrics.json: dns_resolution_error_rate spike; payment-processor endpoint reachability OK when resolved"
+    - "traces.json: payments-svc span failing at DNS resolve step, before TCP connect to processor"
+
+expected_hypotheses:
+  - id: h1
+    statement: "cluster DNS (CoreDNS) resolution failures to the external payment-processor, caused by the 22:05 CoreDNS config change"
+    verdict: confirm
+  - id: h2
+    statement: "the external payment-processor is down / returning errors"
+    verdict: reject
+    reject_reason: "when resolution succeeds, processor returns 200s with normal latency; failures are at the DNS resolve step (no such host), not HTTP responses from the processor"
+  - id: h3
+    statement: "payments-svc pods are crashlooping again (like a prior incident)"
+    verdict: reject
+    reject_reason: "payments-svc pods are healthy/Running this time; errors are per-request name-resolution failures, not pod restarts"
+  - id: h4
+    statement: "Kafka backpressure is causing payments-svc errors"
+    verdict: reject
+    reject_reason: "Kafka is healthy and ledger-svc consumes normally; the failing span is the external processor DNS resolve, unrelated to Kafka"
+  - id: h5
+    statement: "auth-svc failures are cascading into payments-svc"
+    verdict: reject
+    reject_reason: "auth-svc is healthy; payments errors are isolated to the processor-call DNS step"

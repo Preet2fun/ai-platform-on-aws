@@ -1,0 +1,98 @@
+[
+  { "service": "checkout-api", "metric": "http_5xx_rate", "unit": "percent",
+    "points": [
+      {"ts": "2026-02-10T14:00:00Z", "value": 0.2},
+      {"ts": "2026-02-10T14:05:00Z", "value": 0.3},
+      {"ts": "2026-02-10T14:10:00Z", "value": 0.4},
+      {"ts": "2026-02-10T14:15:00Z", "value": 1.1},
+      {"ts": "2026-02-10T14:19:00Z", "value": 4.8},
+      {"ts": "2026-02-10T14:22:00Z", "value": 11.6},
+      {"ts": "2026-02-10T14:28:00Z", "value": 14.2},
+      {"ts": "2026-02-10T14:35:00Z", "value": 13.7}
+    ]
+  },
+  { "service": "checkout-api", "metric": "cpu_utilization", "unit": "percent",
+    "points": [
+      {"ts": "2026-02-10T14:00:00Z", "value": 38},
+      {"ts": "2026-02-10T14:10:00Z", "value": 41},
+      {"ts": "2026-02-10T14:20:00Z", "value": 44},
+      {"ts": "2026-02-10T14:30:00Z", "value": 43}
+    ]
+  },
+  { "service": "checkout-api", "metric": "request_rate", "unit": "rps",
+    "points": [
+      {"ts": "2026-02-10T14:00:00Z", "value": 820},
+      {"ts": "2026-02-10T14:10:00Z", "value": 835},
+      {"ts": "2026-02-10T14:20:00Z", "value": 810},
+      {"ts": "2026-02-10T14:30:00Z", "value": 798}
+    ]
+  },
+  { "service": "product-db", "metric": "active_connections", "unit": "count",
+    "points": [
+      {"ts": "2026-02-10T14:00:00Z", "value": 34},
+      {"ts": "2026-02-10T14:05:00Z", "value": 36},
+      {"ts": "2026-02-10T14:08:00Z", "value": 41},
+      {"ts": "2026-02-10T14:10:00Z", "value": 63},
+      {"ts": "2026-02-10T14:14:00Z", "value": 88},
+      {"ts": "2026-02-10T14:18:00Z", "value": 100},
+      {"ts": "2026-02-10T14:22:00Z", "value": 100},
+      {"ts": "2026-02-10T14:30:00Z", "value": 100},
+      {"ts": "2026-02-10T14:35:00Z", "value": 100}
+    ]
+  },
+  { "service": "product-db", "metric": "max_connections", "unit": "count",
+    "points": [
+      {"ts": "2026-02-10T14:00:00Z", "value": 100},
+      {"ts": "2026-02-10T14:35:00Z", "value": 100}
+    ]
+  },
+  { "service": "product-db", "metric": "cpu_utilization", "unit": "percent",
+    "points": [
+      {"ts": "2026-02-10T14:00:00Z", "value": 29},
+      {"ts": "2026-02-10T14:18:00Z", "value": 33},
+      {"ts": "2026-02-10T14:30:00Z", "value": 31}
+    ]
+  },
+  { "service": "product-api", "metric": "replica_count", "unit": "count",
+    "points": [
+      {"ts": "2026-02-10T14:00:00Z", "value": 3},
+      {"ts": "2026-02-10T14:08:00Z", "value": 9},
+      {"ts": "2026-02-10T14:30:00Z", "value": 9}
+    ]
+  },
+  { "service": "product-api", "metric": "db_conn_acquire_wait_ms", "unit": "ms",
+    "points": [
+      {"ts": "2026-02-10T14:00:00Z", "value": 3},
+      {"ts": "2026-02-10T14:10:00Z", "value": 120},
+      {"ts": "2026-02-10T14:18:00Z", "value": 4200},
+      {"ts": "2026-02-10T14:25:00Z", "value": 5000}
+    ]
+  },
+  { "service": "payment-gateway", "metric": "latency_p95_ms", "unit": "ms",
+    "points": [
+      {"ts": "2026-02-10T14:00:00Z", "value": 210},
+      {"ts": "2026-02-10T14:15:00Z", "value": 219},
+      {"ts": "2026-02-10T14:30:00Z", "value": 205}
+    ]
+  },
+  { "service": "payment-gateway", "metric": "error_rate", "unit": "percent",
+    "points": [
+      {"ts": "2026-02-10T14:00:00Z", "value": 0.1},
+      {"ts": "2026-02-10T14:30:00Z", "value": 0.1}
+    ]
+  },
+  { "service": "cache", "metric": "hit_rate", "unit": "percent",
+    "points": [
+      {"ts": "2026-02-10T14:00:00Z", "value": 94.2},
+      {"ts": "2026-02-10T14:20:00Z", "value": 93.8},
+      {"ts": "2026-02-10T14:30:00Z", "value": 94.0}
+    ]
+  },
+  { "service": "cache", "metric": "evictions", "unit": "count",
+    "points": [
+      {"ts": "2026-02-10T14:00:00Z", "value": 2},
+      {"ts": "2026-02-10T14:20:00Z", "value": 3},
+      {"ts": "2026-02-10T14:30:00Z", "value": 2}
+    ]
+  }
+]

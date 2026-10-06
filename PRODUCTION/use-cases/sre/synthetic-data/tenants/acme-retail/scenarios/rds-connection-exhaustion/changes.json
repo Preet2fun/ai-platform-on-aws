@@ -1,0 +1,5 @@
+[
+  {"ts": "2026-02-10T14:08:00Z", "type": "deploy", "service": "product-api", "summary": "Deploy v2.4.0: per-pod DB pool max 20->8, replicas 3->9, new availability join path", "actor": "ci-pipeline", "ref": "deploy/product-api/2847"},
+  {"ts": "2026-02-10T09:30:00Z", "type": "config", "service": "cache", "summary": "Routine maxmemory-policy review, no change applied", "actor": "platform-team", "ref": "chg/cache/112"},
+  {"ts": "2026-02-09T18:00:00Z", "type": "deploy", "service": "checkout-api", "summary": "Deploy v1.9.2: copy change on confirmation page (no logic change)", "actor": "ci-pipeline", "ref": "deploy/checkout-api/1920"}
+]

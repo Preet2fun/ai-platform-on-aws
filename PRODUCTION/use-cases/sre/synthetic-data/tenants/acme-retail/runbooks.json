@@ -1,0 +1,11 @@
+[
+  {"id": "rb-db-conn-exhaustion", "title": "RDS connection pool exhaustion", "services": ["product-db", "cart-db"],
+   "symptoms": ["5xx on DB-backed endpoints", "connection acquisition timeout", "too many clients already"],
+   "steps": ["Check RDS active_connections vs max_connections", "Identify recent deploys changing pool size or replica count", "Roll back offending deploy or raise pool/connections as stopgap", "Fix long-held connections / N+1 queries", "Add connection-saturation alarm"]},
+  {"id": "rb-cache-stampede", "title": "Cache stampede / thundering herd", "services": ["cache", "product-api"],
+   "symptoms": ["cache hit-rate cliff", "DB read spike", "latency spike with flat request rate"],
+   "steps": ["Confirm hit-rate drop aligns with latency onset", "Check for synchronized key expiry (no TTL jitter)", "Re-warm cache", "Add TTL jitter + request coalescing / single-flight", "Add hit-rate-drop alarm"]},
+  {"id": "rb-latency-regression", "title": "Latency regression after deploy", "services": ["web-storefront", "product-api", "checkout-api"],
+   "symptoms": ["p95 step change at deploy boundary", "healthy dependencies"],
+   "steps": ["Correlate latency step with deploy timeline", "Inspect traces for new/synchronous spans", "Roll back or restore async/cached path", "Add canary latency gate to pipeline"]}
+]

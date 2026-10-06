@@ -1,0 +1,51 @@
+scenario_id: bad-deploy-latency-regression
+tenant_id: acme-retail
+title: "web-storefront latency regression — synchronous call added in new release"
+difficulty: easy
+tags: [deploy, latency, regression, code]
+
+alarm:
+  name: "web-storefront-latency-high"
+  service: web-storefront
+  metric: latency_p95_ms
+  threshold: "> 1500ms for 5m"
+  fired_at: "2026-02-14T16:34:00Z"
+
+symptom_window:
+  start: "2026-02-14T16:15:00Z"
+  end:   "2026-02-14T16:55:00Z"
+
+ground_truth:
+  root_cause: >
+    web-storefront v3.2.0 deployed at 16:28 added a synchronous, blocking call to product-api
+    on the homepage render path (previously async/cached). Each page render now waits on
+    product-api serially, so web-storefront p95 latency jumped right at the deploy boundary.
+    Downstream services are healthy; the regression is purely the new release's code path.
+  causal_chain:
+    - "16:28 web-storefront v3.2.0 deploy adds synchronous product-api call on render path"
+    - "16:29 web-storefront p95 latency steps up from ~400ms to ~1800ms at the deploy boundary"
+    - "16:34 web-storefront-latency-high alarm fires"
+  remediation: >
+    Roll back web-storefront to v3.1.x or make the product-api call async/cached again
+    (restore the pre-release render path). Add a canary latency check to the deploy pipeline.
+  evidence_keys:
+    - "changes.json: web-storefront v3.2.0 deploy at 16:28 (exact latency step boundary)"
+    - "metrics.json: web-storefront p95 step change at deploy; product-api/db healthy"
+    - "traces.json: new synchronous web-storefront -> product-api span on render path"
+
+expected_hypotheses:
+  - id: h1
+    statement: "web-storefront v3.2.0 deploy added a synchronous product-api call that regressed render latency"
+    verdict: confirm
+  - id: h2
+    statement: "product-api or product-db is slow and dragging web-storefront down"
+    verdict: reject
+    reject_reason: "product-api p95 and product-db metrics are flat and healthy; the latency step aligns exactly with the web-storefront deploy, not an upstream slowdown"
+  - id: h3
+    statement: "CDN/edge degradation increased page load time"
+    verdict: reject
+    reject_reason: "cdn metrics are nominal; the regression is server-side render time in web-storefront, visible in traces"
+  - id: h4
+    statement: "traffic surge increased latency under load"
+    verdict: reject
+    reject_reason: "request_rate is flat across the deploy boundary; latency stepped up with the release regardless of load"

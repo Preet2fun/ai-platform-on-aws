@@ -1,0 +1,27 @@
+[
+  {
+    "trace_id": "globex-auth-0135200-slow",
+    "root_service": "auth-svc",
+    "duration_ms": 1290,
+    "ts": "2026-02-18T13:52:00Z",
+    "node": "ip-10-2-3-44",
+    "spans": [
+      {"service": "auth-svc", "op": "POST /token", "duration_ms": 1290, "error": false, "note": "pod on contended node"},
+      {"service": "auth-svc", "op": "verify_credentials (CPU)", "duration_ms": 1240, "error": false, "note": "CPU-bound step, throttled"},
+      {"service": "auth-db", "op": "SELECT user", "duration_ms": 7, "error": false},
+      {"service": "token-cache", "op": "GET session", "duration_ms": 1, "error": false}
+    ]
+  },
+  {
+    "trace_id": "globex-auth-0135200-fast",
+    "root_service": "auth-svc",
+    "duration_ms": 128,
+    "ts": "2026-02-18T13:52:00Z",
+    "node": "ip-10-2-7-91",
+    "spans": [
+      {"service": "auth-svc", "op": "POST /token", "duration_ms": 128, "error": false, "note": "pod on uncontended node — fast"},
+      {"service": "auth-svc", "op": "verify_credentials (CPU)", "duration_ms": 95, "error": false},
+      {"service": "auth-db", "op": "SELECT user", "duration_ms": 6, "error": false}
+    ]
+  }
+]

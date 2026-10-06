@@ -1,0 +1,88 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  SRE Agentic System - P1 ECR repositories. One repo per container image (5 agents + tools).
+  Images are built (ARM64) and pushed here, then referenced by 02-runtimes.yaml. Separate stack
+  so image push happens between repo creation and runtime creation.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: sre-agentic
+  EnvName:
+    Type: String
+    Default: dev
+
+Resources:
+  SupervisorRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${ProjectName}-${EnvName}-supervisor"
+      ImageScanningConfiguration: { ScanOnPush: true }
+      ImageTagMutability: IMMUTABLE
+      Tags:
+        - { Key: component, Value: runtime }
+        - { Key: env, Value: !Ref EnvName }
+        - { Key: usecase, Value: sre }
+
+  InvestigatorRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${ProjectName}-${EnvName}-investigator"
+      ImageScanningConfiguration: { ScanOnPush: true }
+      ImageTagMutability: IMMUTABLE
+      Tags:
+        - { Key: component, Value: runtime }
+        - { Key: env, Value: !Ref EnvName }
+        - { Key: usecase, Value: sre }
+
+  TelemetryRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${ProjectName}-${EnvName}-telemetry"
+      ImageScanningConfiguration: { ScanOnPush: true }
+      ImageTagMutability: IMMUTABLE
+      Tags:
+        - { Key: component, Value: runtime }
+        - { Key: env, Value: !Ref EnvName }
+        - { Key: usecase, Value: sre }
+
+  ChangeRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${ProjectName}-${EnvName}-change-correlation"
+      ImageScanningConfiguration: { ScanOnPush: true }
+      ImageTagMutability: IMMUTABLE
+      Tags:
+        - { Key: component, Value: runtime }
+        - { Key: env, Value: !Ref EnvName }
+        - { Key: usecase, Value: sre }
+
+  RemediationRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${ProjectName}-${EnvName}-remediation"
+      ImageScanningConfiguration: { ScanOnPush: true }
+      ImageTagMutability: IMMUTABLE
+      Tags:
+        - { Key: component, Value: runtime }
+        - { Key: env, Value: !Ref EnvName }
+        - { Key: usecase, Value: sre }
+
+  ToolsRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${ProjectName}-${EnvName}-tools"
+      ImageScanningConfiguration: { ScanOnPush: true }
+      ImageTagMutability: IMMUTABLE
+      Tags:
+        - { Key: component, Value: gateway }
+        - { Key: env, Value: !Ref EnvName }
+        - { Key: usecase, Value: sre }
+
+Outputs:
+  SupervisorRepoUri:   { Value: !GetAtt SupervisorRepo.RepositoryUri }
+  InvestigatorRepoUri: { Value: !GetAtt InvestigatorRepo.RepositoryUri }
+  TelemetryRepoUri:    { Value: !GetAtt TelemetryRepo.RepositoryUri }
+  ChangeRepoUri:       { Value: !GetAtt ChangeRepo.RepositoryUri }
+  RemediationRepoUri:  { Value: !GetAtt RemediationRepo.RepositoryUri }
+  ToolsRepoUri:        { Value: !GetAtt ToolsRepo.RepositoryUri }

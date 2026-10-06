@@ -1,0 +1,48 @@
+[
+  { "service": "web-storefront", "metric": "latency_p95_ms", "unit": "ms",
+    "points": [
+      {"ts": "2026-02-14T16:15:00Z", "value": 390},
+      {"ts": "2026-02-14T16:24:00Z", "value": 405},
+      {"ts": "2026-02-14T16:28:00Z", "value": 430},
+      {"ts": "2026-02-14T16:30:00Z", "value": 1810},
+      {"ts": "2026-02-14T16:34:00Z", "value": 1870},
+      {"ts": "2026-02-14T16:45:00Z", "value": 1840},
+      {"ts": "2026-02-14T16:55:00Z", "value": 1825}
+    ]
+  },
+  { "service": "web-storefront", "metric": "request_rate", "unit": "rps",
+    "points": [
+      {"ts": "2026-02-14T16:15:00Z", "value": 1250},
+      {"ts": "2026-02-14T16:30:00Z", "value": 1240},
+      {"ts": "2026-02-14T16:45:00Z", "value": 1260}
+    ]
+  },
+  { "service": "web-storefront", "metric": "cpu_utilization", "unit": "percent",
+    "points": [
+      {"ts": "2026-02-14T16:15:00Z", "value": 46},
+      {"ts": "2026-02-14T16:30:00Z", "value": 52},
+      {"ts": "2026-02-14T16:45:00Z", "value": 51}
+    ]
+  },
+  { "service": "product-api", "metric": "latency_p95_ms", "unit": "ms",
+    "points": [
+      {"ts": "2026-02-14T16:15:00Z", "value": 70},
+      {"ts": "2026-02-14T16:30:00Z", "value": 72},
+      {"ts": "2026-02-14T16:45:00Z", "value": 69}
+    ]
+  },
+  { "service": "product-db", "metric": "read_latency_ms", "unit": "ms",
+    "points": [
+      {"ts": "2026-02-14T16:15:00Z", "value": 8},
+      {"ts": "2026-02-14T16:30:00Z", "value": 9},
+      {"ts": "2026-02-14T16:45:00Z", "value": 8}
+    ]
+  },
+  { "service": "cdn", "metric": "edge_latency_ms", "unit": "ms",
+    "points": [
+      {"ts": "2026-02-14T16:15:00Z", "value": 22},
+      {"ts": "2026-02-14T16:30:00Z", "value": 23},
+      {"ts": "2026-02-14T16:45:00Z", "value": 21}
+    ]
+  }
+]

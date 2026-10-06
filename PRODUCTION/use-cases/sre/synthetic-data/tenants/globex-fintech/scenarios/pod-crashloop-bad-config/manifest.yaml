@@ -1,0 +1,54 @@
+scenario_id: pod-crashloop-bad-config
+tenant_id: globex-fintech
+title: "payments-svc CrashLoopBackOff — bad config key in new release"
+difficulty: easy
+tags: [kubernetes, crashloop, config, deploy]
+
+alarm:
+  name: "payments-svc-availability-low"
+  service: payments-svc
+  metric: healthy_pod_ratio
+  threshold: "< 50% for 3m"
+  fired_at: "2026-02-16T11:07:00Z"
+
+symptom_window:
+  start: "2026-02-16T10:50:00Z"
+  end:   "2026-02-16T11:25:00Z"
+
+ground_truth:
+  root_cause: >
+    payments-svc v5.1.0 (11:02) shipped with a ConfigMap that renamed the Kafka bootstrap
+    key from KAFKA_BROKERS to KAFKA_BOOTSTRAP, but the code still reads KAFKA_BROKERS. On
+    startup the service throws a missing-config exception and exits non-zero, so Kubernetes
+    restarts it repeatedly -> CrashLoopBackOff. Healthy pod ratio collapses. Kafka itself is
+    healthy; the fault is the config/code key mismatch in the release.
+  causal_chain:
+    - "11:02 payments-svc v5.1.0 deploy with ConfigMap key rename (KAFKA_BROKERS -> KAFKA_BOOTSTRAP)"
+    - "11:03 pods start, throw 'missing required config KAFKA_BROKERS', exit 1"
+    - "11:04 Kubernetes restarts pods repeatedly -> CrashLoopBackOff"
+    - "11:07 payments-svc-availability-low alarm fires (healthy pods < 50%)"
+  remediation: >
+    Roll back the ConfigMap/release or add the KAFKA_BROKERS key back (or update code to read
+    KAFKA_BOOTSTRAP). Add a config-contract check / startup smoke test to the deploy pipeline.
+  evidence_keys:
+    - "changes.json: payments-svc v5.1.0 deploy + ConfigMap key rename at 11:02"
+    - "events.json: CrashLoopBackOff, BackOff restarting failed container"
+    - "logs.json: 'missing required config KAFKA_BROKERS' startup fatal; exit code 1"
+    - "metrics.json: healthy_pod_ratio collapse; restart_count climbing"
+
+expected_hypotheses:
+  - id: h1
+    statement: "payments-svc v5.1.0 config key mismatch (KAFKA_BROKERS vs KAFKA_BOOTSTRAP) causes startup crash -> CrashLoopBackOff"
+    verdict: confirm
+  - id: h2
+    statement: "Kafka (MSK) outage is breaking payments-svc"
+    verdict: reject
+    reject_reason: "MSK broker health and produce/consume metrics are nominal; other Kafka consumers (ledger-svc) are healthy; failure is at payments-svc startup before Kafka connect"
+  - id: h3
+    statement: "node resource pressure (OOMKill) is killing pods"
+    verdict: reject
+    reject_reason: "pods exit code 1 from a config exception, not OOMKilled (137); node memory/CPU normal"
+  - id: h4
+    statement: "image pull failure prevented pods from starting"
+    verdict: reject
+    reject_reason: "image pulled successfully; pods reach Running then crash on startup config read, not ImagePullBackOff"

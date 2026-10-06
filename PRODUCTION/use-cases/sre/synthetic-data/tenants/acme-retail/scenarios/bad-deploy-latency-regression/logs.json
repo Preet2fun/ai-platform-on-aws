@@ -1,0 +1,7 @@
+[
+  {"service": "web-storefront", "level": "INFO", "ts": "2026-02-14T16:28:05Z", "message": "starting v3.2.0; render path now calls product-api /availability synchronously per request"},
+  {"service": "web-storefront", "level": "WARNING", "ts": "2026-02-14T16:31:00Z", "message": "render time elevated: homepage 1800ms, blocking on product-api call"},
+  {"service": "product-api", "level": "INFO", "ts": "2026-02-14T16:31:00Z", "message": "GET /availability nominal 68ms, serving increased synchronous call volume from web-storefront"},
+  {"service": "product-db", "level": "INFO", "ts": "2026-02-14T16:31:00Z", "message": "read latency nominal 8ms"},
+  {"service": "web-storefront", "level": "INFO", "ts": "2026-02-14T16:20:00Z", "message": "pre-deploy homepage render 390ms (product availability served from cache async)"}
+]

@@ -1,0 +1,23 @@
+[
+  {
+    "trace_id": "acme-prod-0094601",
+    "root_service": "product-api",
+    "duration_ms": 1180,
+    "ts": "2026-02-12T09:46:01Z",
+    "spans": [
+      {"service": "product-api", "op": "GET /catalog", "duration_ms": 1180, "error": false},
+      {"service": "product-api", "op": "cache.get(catalog:sku)", "duration_ms": 2, "error": false, "note": "MISS"},
+      {"service": "product-api", "op": "db.query product-db catalog", "duration_ms": 1150, "error": false, "note": "fallback on miss, contended"}
+    ]
+  },
+  {
+    "trace_id": "acme-prod-0093800",
+    "root_service": "product-api",
+    "duration_ms": 61,
+    "ts": "2026-02-12T09:38:00Z",
+    "spans": [
+      {"service": "product-api", "op": "GET /catalog", "duration_ms": 61, "error": false},
+      {"service": "product-api", "op": "cache.get(catalog:sku)", "duration_ms": 2, "error": false, "note": "HIT"}
+    ]
+  }
+]

@@ -1,0 +1,88 @@
+# Tenant registry — multi-tenant SRE agentic system
+# Each tenant is an isolated customer environment. The synthetic backends and the agent
+# memory namespaces are both keyed by `tenant_id`. In P9, `data_source` flips to `cloudwatch`
+# for a tenant without changing agent logic (same MCP tool contract).
+#
+# Schema per tenant:
+#   tenant_id      : stable slug, used in JWT claim + memory namespace + fixture path
+#   display_name   : human label for the GUI
+#   data_source    : synthetic | cloudwatch   (v1 = synthetic for all)
+#   memory_namespace_root : outermost isolation boundary (= /<tenant_id>)
+#   services       : the microservices/resources that make up this tenant's environment
+#   scenarios      : incident scenario ids available for this tenant (fixtures on disk)
+
+version: 1
+
+tenants:
+  - tenant_id: acme-retail
+    display_name: "Acme Retail (e-commerce platform)"
+    data_source: synthetic
+    memory_namespace_root: "/acme-retail"
+    environment:
+      region: us-east-1
+      platform: "EKS + RDS PostgreSQL + ElastiCache + ALB"
+    services:
+      - name: web-storefront        # public ALB -> web tier
+        type: service
+        depends_on: [product-api, cart-api, cdn]
+      - name: product-api
+        type: service
+        depends_on: [product-db, cache]
+      - name: cart-api
+        type: service
+        depends_on: [cart-db, cache]
+      - name: checkout-api
+        type: service
+        depends_on: [payment-gateway, cart-api, product-db]
+      - name: product-db            # RDS PostgreSQL
+        type: database
+        engine: postgresql
+      - name: cart-db               # RDS PostgreSQL
+        type: database
+        engine: postgresql
+      - name: cache                 # ElastiCache Redis
+        type: cache
+        engine: redis
+      - name: cdn
+        type: edge
+    scenarios:
+      - rds-connection-exhaustion
+      - cache-stampede
+      - bad-deploy-latency-regression
+
+  - tenant_id: globex-fintech
+    display_name: "Globex Fintech (payments & ledger)"
+    data_source: synthetic
+    memory_namespace_root: "/globex-fintech"
+    environment:
+      region: us-east-1
+      platform: "EKS + Aurora PostgreSQL + MSK (Kafka) + NLB"
+    services:
+      - name: api-gateway-svc       # entry tier
+        type: service
+        depends_on: [auth-svc, ledger-svc, payments-svc]
+      - name: auth-svc
+        type: service
+        depends_on: [auth-db, token-cache]
+      - name: payments-svc
+        type: service
+        depends_on: [ledger-svc, kafka, payment-processor]
+      - name: ledger-svc
+        type: service
+        depends_on: [ledger-db, kafka]
+      - name: ledger-db             # Aurora PostgreSQL
+        type: database
+        engine: aurora-postgresql
+      - name: auth-db               # Aurora PostgreSQL
+        type: database
+        engine: aurora-postgresql
+      - name: token-cache           # ElastiCache Redis
+        type: cache
+        engine: redis
+      - name: kafka                 # Amazon MSK
+        type: streaming
+        engine: kafka
+    scenarios:
+      - pod-crashloop-bad-config
+      - noisy-neighbor-latency
+      - dns-resolution-failure

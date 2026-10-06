@@ -1,0 +1,56 @@
+scenario_id: cache-stampede
+tenant_id: acme-retail
+title: "product-api latency spike — cache stampede after mass key expiry"
+difficulty: medium
+tags: [cache, redis, thundering-herd, latency]
+
+alarm:
+  name: "product-api-latency-high"
+  service: product-api
+  metric: latency_p95_ms
+  threshold: "> 800ms for 5m"
+  fired_at: "2026-02-12T09:46:00Z"
+
+symptom_window:
+  start: "2026-02-12T09:30:00Z"
+  end:   "2026-02-12T10:05:00Z"
+
+ground_truth:
+  root_cause: >
+    A batch cache-warmer job set a large set of product catalog keys with the SAME TTL, so
+    they all expired simultaneously at ~09:40. On the next requests, every product-api pod
+    missed the cache at once and ran the expensive catalog query against product-db
+    (thundering herd / cache stampede). Cache hit-rate collapsed, product-db read load and
+    product-api p95 latency spiked. No deploy and no DB fault — the trigger is synchronized
+    key expiry with no jitter and no request coalescing.
+  causal_chain:
+    - "08:40 cache-warmer batch wrote ~12k catalog keys with identical 60-min TTL"
+    - "09:40 all warmed keys expire at once; cache hit-rate drops 94%->31%"
+    - "09:41 product-api pods all miss cache -> run catalog query on product-db simultaneously"
+    - "09:43 product-db read IOPS + query latency spike; product-api p95 climbs"
+    - "09:46 product-api-latency-high alarm fires"
+  remediation: >
+    Add TTL jitter to the cache-warmer (randomize expiry), add request coalescing / single-flight
+    on cache miss, and consider soft-TTL refresh-ahead. Short-term: re-warm the cache. Add a
+    cache hit-rate drop alarm.
+  evidence_keys:
+    - "metrics.json: cache hit_rate cliff 94->31 at 09:40; product-db read_latency + reads spike"
+    - "logs.json: cache mass key expiry; product-api cache miss burst; product-db heavy catalog query volume"
+    - "changes.json: cache-warmer batch at 08:40 (no app deploy in window)"
+
+expected_hypotheses:
+  - id: h1
+    statement: "cache stampede from synchronized key expiry (no jitter) caused product-db read load and product-api latency"
+    verdict: confirm
+  - id: h2
+    statement: "a product-api deploy introduced a slow code path"
+    verdict: reject
+    reject_reason: "no product-api deploy in the window; latency onset aligns exactly with the cache hit-rate cliff, not a release"
+  - id: h3
+    statement: "product-db is undersized / hardware fault"
+    verdict: reject
+    reject_reason: "product-db CPU/connections normal before 09:40 and recover after re-warm; load is driven by the miss burst, not a DB fault"
+  - id: h4
+    statement: "traffic surge (flash sale) overwhelmed product-api"
+    verdict: reject
+    reject_reason: "request_rate is flat; the spike is cache-miss driven, not request-volume driven"

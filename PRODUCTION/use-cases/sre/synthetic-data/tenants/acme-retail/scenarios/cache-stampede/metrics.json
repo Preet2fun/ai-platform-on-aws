@@ -1,0 +1,72 @@
+[
+  { "service": "product-api", "metric": "latency_p95_ms", "unit": "ms",
+    "points": [
+      {"ts": "2026-02-12T09:30:00Z", "value": 180},
+      {"ts": "2026-02-12T09:38:00Z", "value": 195},
+      {"ts": "2026-02-12T09:40:00Z", "value": 240},
+      {"ts": "2026-02-12T09:42:00Z", "value": 760},
+      {"ts": "2026-02-12T09:46:00Z", "value": 1240},
+      {"ts": "2026-02-12T09:52:00Z", "value": 1180},
+      {"ts": "2026-02-12T10:00:00Z", "value": 410},
+      {"ts": "2026-02-12T10:05:00Z", "value": 205}
+    ]
+  },
+  { "service": "cache", "metric": "hit_rate", "unit": "percent",
+    "points": [
+      {"ts": "2026-02-12T09:30:00Z", "value": 94.1},
+      {"ts": "2026-02-12T09:38:00Z", "value": 93.9},
+      {"ts": "2026-02-12T09:40:00Z", "value": 71.0},
+      {"ts": "2026-02-12T09:42:00Z", "value": 31.2},
+      {"ts": "2026-02-12T09:46:00Z", "value": 33.5},
+      {"ts": "2026-02-12T09:58:00Z", "value": 68.0},
+      {"ts": "2026-02-12T10:05:00Z", "value": 92.6}
+    ]
+  },
+  { "service": "cache", "metric": "expired_keys", "unit": "count",
+    "points": [
+      {"ts": "2026-02-12T09:38:00Z", "value": 40},
+      {"ts": "2026-02-12T09:40:00Z", "value": 11840},
+      {"ts": "2026-02-12T09:42:00Z", "value": 160}
+    ]
+  },
+  { "service": "product-db", "metric": "read_latency_ms", "unit": "ms",
+    "points": [
+      {"ts": "2026-02-12T09:30:00Z", "value": 8},
+      {"ts": "2026-02-12T09:40:00Z", "value": 11},
+      {"ts": "2026-02-12T09:43:00Z", "value": 92},
+      {"ts": "2026-02-12T09:46:00Z", "value": 140},
+      {"ts": "2026-02-12T10:00:00Z", "value": 24}
+    ]
+  },
+  { "service": "product-db", "metric": "reads_per_sec", "unit": "count",
+    "points": [
+      {"ts": "2026-02-12T09:30:00Z", "value": 310},
+      {"ts": "2026-02-12T09:40:00Z", "value": 360},
+      {"ts": "2026-02-12T09:43:00Z", "value": 4200},
+      {"ts": "2026-02-12T09:46:00Z", "value": 5100},
+      {"ts": "2026-02-12T10:00:00Z", "value": 520}
+    ]
+  },
+  { "service": "product-db", "metric": "active_connections", "unit": "count",
+    "points": [
+      {"ts": "2026-02-12T09:30:00Z", "value": 32},
+      {"ts": "2026-02-12T09:43:00Z", "value": 58},
+      {"ts": "2026-02-12T09:46:00Z", "value": 61},
+      {"ts": "2026-02-12T10:00:00Z", "value": 35}
+    ]
+  },
+  { "service": "product-api", "metric": "request_rate", "unit": "rps",
+    "points": [
+      {"ts": "2026-02-12T09:30:00Z", "value": 940},
+      {"ts": "2026-02-12T09:43:00Z", "value": 955},
+      {"ts": "2026-02-12T09:46:00Z", "value": 948},
+      {"ts": "2026-02-12T10:00:00Z", "value": 930}
+    ]
+  },
+  { "service": "product-api", "metric": "replica_count", "unit": "count",
+    "points": [
+      {"ts": "2026-02-12T09:30:00Z", "value": 6},
+      {"ts": "2026-02-12T10:05:00Z", "value": 6}
+    ]
+  }
+]

@@ -1,0 +1,12 @@
+[
+  {
+    "trace_id": "globex-api-0110800",
+    "root_service": "api-gateway-svc",
+    "duration_ms": 12,
+    "ts": "2026-02-16T11:08:00Z",
+    "spans": [
+      {"service": "api-gateway-svc", "op": "POST /payments", "duration_ms": 12, "error": true},
+      {"service": "api-gateway-svc", "op": "route -> payments-svc", "duration_ms": 2, "error": true, "error_detail": "503 no healthy upstream (payments-svc CrashLoopBackOff)"}
+    ]
+  }
+]

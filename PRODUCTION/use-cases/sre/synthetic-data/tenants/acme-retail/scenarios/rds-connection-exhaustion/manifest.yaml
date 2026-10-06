@@ -1,0 +1,57 @@
+scenario_id: rds-connection-exhaustion
+tenant_id: acme-retail
+title: "Checkout 5xx spike — product-db connection pool exhausted after deploy"
+difficulty: medium
+tags: [database, deploy, connection-pool, postgresql]
+
+alarm:
+  name: "checkout-api-5xx-high"
+  service: checkout-api
+  metric: http_5xx_rate
+  threshold: "> 5% for 5m"
+  fired_at: "2026-02-10T14:22:00Z"
+
+symptom_window:
+  start: "2026-02-10T14:00:00Z"
+  end:   "2026-02-10T14:40:00Z"
+
+ground_truth:
+  root_cause: >
+    A product-api deploy at 14:08 lowered the per-pod DB connection pool max but tripled
+    replica count, and introduced a query path that holds connections longer. Aggregate
+    connections to product-db (RDS PostgreSQL) exceeded max_connections, so new connections
+    were refused. checkout-api (which reads product-db) then returned 5xx on connection
+    acquisition timeouts. The symptom surfaced at checkout-api but the cause is product-db
+    connection exhaustion triggered by the product-api deploy.
+  causal_chain:
+    - "14:08 product-api v2.4.0 deploy: pool max 20->8 per pod, replicas 3->9, new N+1 query path"
+    - "14:10 product-db active_connections climbs toward max_connections (100)"
+    - "14:18 product-db connections saturate; 'remaining connection slots reserved' errors"
+    - "14:20 checkout-api connection acquisition timeouts -> 5xx"
+    - "14:22 checkout-api-5xx-high alarm fires"
+  remediation: >
+    Roll back product-api to v2.3.x (or raise per-pod pool back and reduce replica count),
+    fix the N+1 query to release connections promptly, and raise RDS max_connections only as
+    a stopgap. Add a connection-saturation alarm on product-db.
+  evidence_keys:
+    - "changes.json: product-api v2.4.0 deploy at 14:08"
+    - "metrics.json: product-db active_connections saturating at 100"
+    - "logs.json: product-db 'remaining connection slots reserved'; checkout-api 'connection acquisition timeout'"
+    - "traces.json: checkout-api spans erroring on product-db connection acquire"
+
+expected_hypotheses:
+  - id: h1
+    statement: "product-db connection pool exhausted (connections hit max_connections), caused by the 14:08 product-api deploy"
+    verdict: confirm
+  - id: h2
+    statement: "payment-gateway outage is causing checkout failures"
+    verdict: reject
+    reject_reason: "payment-gateway latency/error metrics are flat through the window; checkout errors are DB-connection timeouts, not payment errors"
+  - id: h3
+    statement: "ElastiCache (cache) eviction storm is the root cause"
+    verdict: reject
+    reject_reason: "cache hit-rate and evictions are normal; checkout-api error traces point to product-db, not cache"
+  - id: h4
+    statement: "general traffic surge overloaded checkout-api CPU"
+    verdict: reject
+    reject_reason: "request volume is flat/slightly down; checkout-api CPU normal; errors correlate with DB connection saturation not load"
