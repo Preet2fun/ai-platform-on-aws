@@ -1,0 +1,11 @@
+[
+  {"id": "rb-crashloop", "title": "Pod CrashLoopBackOff after release", "services": ["payments-svc", "ledger-svc", "auth-svc"],
+   "symptoms": ["healthy pod ratio drop", "restart_count climbing", "BackOff restarting failed container"],
+   "steps": ["kubectl describe pod / check events for CrashLoopBackOff vs ImagePullBackOff vs OOMKilled", "Inspect startup logs for config/exception vs exit code", "Compare ConfigMap/env against code's expected keys", "Roll back ConfigMap/release or add missing key", "Add startup smoke test + config-contract check to pipeline"]},
+  {"id": "rb-noisy-neighbor", "title": "Noisy neighbor CPU contention", "services": ["auth-svc", "payments-svc", "ledger-svc"],
+   "symptoms": ["latency spike on subset of pods", "node CPU saturation", "cfs CPU throttling"],
+   "steps": ["Split latency by node to find contended node", "List pods on that node; find CPU-hungry neighbor (missing limits)", "Evict/reschedule the batch job", "Set CPU limits/requests; use node pool / anti-affinity for batch", "Add node CPU-saturation + pod-throttling alarms"]},
+  {"id": "rb-dns-failure", "title": "DNS resolution failures (CoreDNS)", "services": ["payments-svc", "coredns"],
+   "symptoms": ["no such host / SERVFAIL", "intermittent external-call failures", "errors at resolve step before TCP connect"],
+   "steps": ["Confirm failures are at DNS resolve, not HTTP from the dependency", "Check recent CoreDNS Corefile/ConfigMap changes", "Revert to multiple upstreams + prior cache TTL", "Add NodeLocal DNSCache", "Add DNS success-rate alarm + synthetic hostname check"]}
+]

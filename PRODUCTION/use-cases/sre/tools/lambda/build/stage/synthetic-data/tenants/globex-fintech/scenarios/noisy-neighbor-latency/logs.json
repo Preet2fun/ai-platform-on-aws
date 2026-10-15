@@ -1,0 +1,8 @@
+[
+  {"service": "auth-svc", "level": "WARNING", "ts": "2026-02-18T13:45:30Z", "message": "CPU throttling detected: cfs throttled 480 periods/30s on pod auth-svc-77 (node ip-10-2-3-44)"},
+  {"service": "auth-svc", "level": "WARNING", "ts": "2026-02-18T13:52:00Z", "message": "request handling slow: p95 1300ms on node ip-10-2-3-44; pods on other nodes nominal ~130ms"},
+  {"service": "auth-svc", "level": "INFO", "ts": "2026-02-18T13:52:00Z", "message": "auth-db query 7ms, token-cache 1ms — dependencies healthy; latency is local compute"},
+  {"service": "ledger-reconciler", "level": "INFO", "ts": "2026-02-18T13:40:10Z", "message": "batch reconciliation started on node ip-10-2-3-44, CPU-bound, no cpu limit configured"},
+  {"service": "auth-db", "level": "INFO", "ts": "2026-02-18T13:52:00Z", "message": "Aurora auth-db nominal, query p95 7ms, connections 22"},
+  {"service": "token-cache", "level": "INFO", "ts": "2026-02-18T13:52:00Z", "message": "redis token-cache hit_rate 97%, latency 1ms"}
+]

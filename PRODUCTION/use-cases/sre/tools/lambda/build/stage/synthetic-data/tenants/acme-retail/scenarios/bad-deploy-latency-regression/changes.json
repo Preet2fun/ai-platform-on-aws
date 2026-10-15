@@ -1,0 +1,4 @@
+[
+  {"ts": "2026-02-14T16:28:00Z", "type": "deploy", "service": "web-storefront", "summary": "Deploy v3.2.0: personalize homepage — adds synchronous product-api /availability call on render path", "actor": "ci-pipeline", "ref": "deploy/web-storefront/3200"},
+  {"ts": "2026-02-14T11:00:00Z", "type": "config", "service": "product-db", "summary": "Routine parameter group review, no change applied", "actor": "platform-team", "ref": "chg/product-db/88"}
+]

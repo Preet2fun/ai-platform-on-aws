@@ -1,0 +1,9 @@
+[
+  {"service": "cache", "level": "INFO", "ts": "2026-02-12T09:40:02Z", "message": "mass key expiry: 11840 keys evicted by TTL in 2s (keyspace: catalog:*)"},
+  {"service": "product-api", "level": "WARNING", "ts": "2026-02-12T09:41:10Z", "message": "cache miss burst: catalog:* miss rate 69%, falling back to product-db"},
+  {"service": "product-api", "level": "WARNING", "ts": "2026-02-12T09:43:00Z", "message": "slow upstream: product-db catalog query 92ms (baseline 8ms), concurrent fan-out across pods"},
+  {"service": "product-db", "level": "WARNING", "ts": "2026-02-12T09:44:00Z", "message": "high read volume: SELECT ... FROM products catalog scan, 5100 reads/s (baseline ~350)"},
+  {"service": "product-api", "level": "INFO", "ts": "2026-02-12T10:00:00Z", "message": "cache re-warmed, hit_rate recovering, p95 410ms"},
+  {"service": "payment-gateway", "level": "INFO", "ts": "2026-02-12T09:46:00Z", "message": "payment authorization nominal, latency 206ms"},
+  {"service": "checkout-api", "level": "INFO", "ts": "2026-02-12T09:46:00Z", "message": "checkout nominal; product availability slower via product-api"}
+]

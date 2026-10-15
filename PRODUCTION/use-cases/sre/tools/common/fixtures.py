@@ -18,9 +18,13 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import yaml
+try:
+    import yaml  # optional: not available in the minimal Lambda runtime
+except ImportError:  # pragma: no cover
+    yaml = None
 
-# repo-relative root: .../PRODUCTION/use-cases/sre
+# repo-relative root: .../PRODUCTION/use-cases/sre.
+# In the Gateway Lambda package the files are bundled flat, so SRE_SYNTH_DATA_ROOT points at them.
 _SRE_ROOT = Path(__file__).resolve().parents[2]
 _DATA_ROOT = Path(os.getenv("SRE_SYNTH_DATA_ROOT", _SRE_ROOT / "synthetic-data" / "tenants"))
 
@@ -35,8 +39,14 @@ class ScenarioNotFound(Exception):
 
 @lru_cache(maxsize=1)
 def _registry() -> dict[str, Any]:
-    reg = _DATA_ROOT / "registry.yaml"
-    with open(reg, encoding="utf-8") as f:
+    # Prefer registry.json (dependency-free, used in the Lambda package); fall back to YAML.
+    reg_json = _DATA_ROOT / "registry.json"
+    if reg_json.exists():
+        with open(reg_json, encoding="utf-8") as f:
+            return json.load(f)
+    if yaml is None:
+        raise RuntimeError("registry.json not found and PyYAML unavailable to read registry.yaml")
+    with open(_DATA_ROOT / "registry.yaml", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 

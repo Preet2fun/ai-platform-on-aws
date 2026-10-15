@@ -1,0 +1,53 @@
+[
+  { "service": "payments-svc", "metric": "healthy_pod_ratio", "unit": "percent",
+    "points": [
+      {"ts": "2026-02-16T10:50:00Z", "value": 100},
+      {"ts": "2026-02-16T11:02:00Z", "value": 100},
+      {"ts": "2026-02-16T11:04:00Z", "value": 50},
+      {"ts": "2026-02-16T11:07:00Z", "value": 17},
+      {"ts": "2026-02-16T11:15:00Z", "value": 0},
+      {"ts": "2026-02-16T11:25:00Z", "value": 0}
+    ]
+  },
+  { "service": "payments-svc", "metric": "restart_count", "unit": "count",
+    "points": [
+      {"ts": "2026-02-16T11:02:00Z", "value": 0},
+      {"ts": "2026-02-16T11:05:00Z", "value": 6},
+      {"ts": "2026-02-16T11:10:00Z", "value": 22},
+      {"ts": "2026-02-16T11:20:00Z", "value": 54}
+    ]
+  },
+  { "service": "payments-svc", "metric": "node_memory_utilization", "unit": "percent",
+    "points": [
+      {"ts": "2026-02-16T10:50:00Z", "value": 58},
+      {"ts": "2026-02-16T11:10:00Z", "value": 60},
+      {"ts": "2026-02-16T11:20:00Z", "value": 59}
+    ]
+  },
+  { "service": "kafka", "metric": "under_replicated_partitions", "unit": "count",
+    "points": [
+      {"ts": "2026-02-16T10:50:00Z", "value": 0},
+      {"ts": "2026-02-16T11:10:00Z", "value": 0},
+      {"ts": "2026-02-16T11:20:00Z", "value": 0}
+    ]
+  },
+  { "service": "kafka", "metric": "broker_healthy_count", "unit": "count",
+    "points": [
+      {"ts": "2026-02-16T10:50:00Z", "value": 3},
+      {"ts": "2026-02-16T11:20:00Z", "value": 3}
+    ]
+  },
+  { "service": "ledger-svc", "metric": "healthy_pod_ratio", "unit": "percent",
+    "points": [
+      {"ts": "2026-02-16T10:50:00Z", "value": 100},
+      {"ts": "2026-02-16T11:20:00Z", "value": 100}
+    ]
+  },
+  { "service": "api-gateway-svc", "metric": "http_5xx_rate", "unit": "percent",
+    "points": [
+      {"ts": "2026-02-16T10:50:00Z", "value": 0.2},
+      {"ts": "2026-02-16T11:08:00Z", "value": 6.4},
+      {"ts": "2026-02-16T11:20:00Z", "value": 7.1}
+    ]
+  }
+]

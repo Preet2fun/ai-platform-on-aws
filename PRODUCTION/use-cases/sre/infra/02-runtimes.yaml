@@ -8,6 +8,14 @@ Description: >
 Parameters:
   ProjectName: { Type: String, Default: sre-agentic }
   EnvName:     { Type: String, Default: dev }
+  # AgentRuntimeName must match [a-zA-Z][a-zA-Z0-9_]{0,47} — underscores only, NO hyphens.
+  # ProjectName ("sre-agentic") has a hyphen, so runtime names use this separate underscore
+  # token. Keep it in sync with ProjectName/EnvName (sre-agentic + dev -> sre_agentic_dev).
+  RuntimeNamePrefix:
+    Type: String
+    Default: sre_agentic_dev
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9_]{0,39}"
+    Description: Underscore-only prefix for AgentCore runtime names (hyphens are rejected by the API).
   ModelId:
     Type: String
     Default: us.anthropic.claude-sonnet-4-5-20250929-v1:0
@@ -21,6 +29,43 @@ Parameters:
     Type: String
     Default: "http://localhost:8080"
     Description: Base URL the specialists use to reach the tools backend (P4 replaces with the Gateway MCP URL).
+  MemoryId:
+    Type: String
+    Default: ""
+    Description: AgentCore Memory resource id (from 03-memory.yaml). Empty = memory disabled (investigator no-ops).
+  # ---- P3 inbound auth (from 04-identity.yaml). All empty by default -> supervisor stays SigV4/open. ----
+  JwtDiscoveryUrl:
+    Type: String
+    Default: ""
+    Description: Cognito OIDC discovery URL. If set, the supervisor requires an inbound JWT (SigV4 no longer works for it).
+  JwtAllowedClients:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: Allowed Cognito client IDs (the per-tenant M2M clients) for the supervisor's JWT authorizer.
+  ClientTenantMap:
+    Type: String
+    Default: ""
+    Description: JSON map of verified client_id -> tenant_id, consumed by the supervisor to derive tenant from the token.
+  # ---- P4 gateway (from 05-gateway.yaml / 04-identity.yaml). Empty -> specialists use legacy tools path. ----
+  GatewayUrl:
+    Type: String
+    Default: ""
+    Description: AgentCore Gateway MCP URL. If set, specialists fetch evidence via the gateway instead of the tools runtime.
+  GatewayTokenEndpoint:
+    Type: String
+    Default: ""
+    Description: Cognito token endpoint for the gateway-caller M2M client.
+  GatewayCallerSecretArn:
+    Type: String
+    Default: ""
+    Description: Secrets Manager ARN with the gateway-caller client_id/client_secret.
+
+Conditions:
+  # Only attach the inbound JWT authorizer when a discovery URL is provided (P3 on). Before P3 the
+  # supervisor stays SigV4/open so the earlier checkpoints keep working.
+  JwtAuthEnabled: !Not [ !Equals [ !Ref JwtDiscoveryUrl, "" ] ]
+  # Grant specialists Secrets Manager access to the gateway-caller secret only when the gateway is wired.
+  GatewaySecretEnabled: !Not [ !Equals [ !Ref GatewayCallerSecretArn, "" ] ]
 
 Resources:
   # ---------- Shared managed policies ----------
@@ -74,13 +119,52 @@ Resources:
               - "arn:aws:bedrock:*::foundation-model/anthropic.claude-*"
               - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*claude*"
 
+  # Lets a caller runtime (supervisor / investigator) invoke the specialist runtimes over A2A
+  # via SigV4 (boto3 invoke_agent_runtime). Scoped to THIS project's runtimes in this account/region.
+  # We use a wildcard on the runtime name rather than !GetAtt the specialist ARNs on purpose:
+  # referencing a runtime's ARN from a role that the runtime also depends on would create a
+  # CloudFormation dependency cycle (runtime -> role -> runtime). The wildcard is still tightly
+  # bounded to runtimes named "${RuntimeNamePrefix}_*".
+  A2AInvokePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${ProjectName}-${EnvName}-a2a-invoke"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: InvokeSpecialistRuntimes
+            Effect: Allow
+            Action: [ "bedrock-agentcore:InvokeAgentRuntime" ]
+            Resource:
+              - !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/${RuntimeNamePrefix}_*"
+              - !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/${RuntimeNamePrefix}_*/runtime-endpoint/*"
+
+  # P4: lets tool-using agents read the gateway-caller secret to fetch a Gateway token. Scoped to
+  # the one secret. Attached to telemetry/change/remediation/investigator roles when the gateway is on.
+  GatewaySecretPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Condition: GatewaySecretEnabled
+    Properties:
+      ManagedPolicyName: !Sub "${ProjectName}-${EnvName}-gateway-secret"
+      Roles: [ !Ref TelemetryRole, !Ref ChangeRole, !Ref RemediationRole, !Ref InvestigatorRole ]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ReadGatewayCallerSecret
+            Effect: Allow
+            Action: [ "secretsmanager:GetSecretValue" ]
+            Resource: !Ref GatewayCallerSecretArn
+
   # ---------- Per-agent execution roles (one per runtime = isolation) ----------
   # Agents that call Claude get BOTH policies; the tools backend gets only the runtime-exec policy.
+  # NOTE: the AgentCore trust policy is written out explicitly on each role — CloudFormation
+  # does not allow YAML anchors/aliases, so we cannot share one copy. All six are identical:
+  # allow bedrock-agentcore.amazonaws.com to assume the role, scoped to this account+region.
   SupervisorRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Sub "${ProjectName}-${EnvName}-supervisor-role"
-      AssumeRolePolicyDocument: &acTrust
+      AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:
           - Effect: Allow
@@ -89,46 +173,91 @@ Resources:
             Condition:
               StringEquals: { "aws:SourceAccount": !Ref "AWS::AccountId" }
               ArnLike: { "aws:SourceArn": !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*" }
-      ManagedPolicyArns: [ !Ref RuntimeExecPolicy, !Ref BedrockInvokePolicy ]
+      # supervisor delegates to investigator + remediation -> needs A2A invoke
+      ManagedPolicyArns: [ !Ref RuntimeExecPolicy, !Ref BedrockInvokePolicy, !Ref A2AInvokePolicy ]
       Tags: [ { Key: component, Value: runtime }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
 
   InvestigatorRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Sub "${ProjectName}-${EnvName}-investigator-role"
-      AssumeRolePolicyDocument: *acTrust
-      ManagedPolicyArns: [ !Ref RuntimeExecPolicy, !Ref BedrockInvokePolicy ]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: bedrock-agentcore.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { "aws:SourceAccount": !Ref "AWS::AccountId" }
+              ArnLike: { "aws:SourceArn": !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*" }
+      # investigator delegates to telemetry + change -> needs A2A invoke
+      ManagedPolicyArns: [ !Ref RuntimeExecPolicy, !Ref BedrockInvokePolicy, !Ref A2AInvokePolicy ]
       Tags: [ { Key: component, Value: runtime }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
 
   TelemetryRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Sub "${ProjectName}-${EnvName}-telemetry-role"
-      AssumeRolePolicyDocument: *acTrust
-      ManagedPolicyArns: [ !Ref RuntimeExecPolicy, !Ref BedrockInvokePolicy ]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: bedrock-agentcore.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { "aws:SourceAccount": !Ref "AWS::AccountId" }
+              ArnLike: { "aws:SourceArn": !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*" }
+      # calls the tools runtime (metrics/logs/traces) via SigV4 invoke -> needs A2A invoke
+      ManagedPolicyArns: [ !Ref RuntimeExecPolicy, !Ref BedrockInvokePolicy, !Ref A2AInvokePolicy ]
       Tags: [ { Key: component, Value: runtime }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
 
   ChangeRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Sub "${ProjectName}-${EnvName}-change-role"
-      AssumeRolePolicyDocument: *acTrust
-      ManagedPolicyArns: [ !Ref RuntimeExecPolicy, !Ref BedrockInvokePolicy ]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: bedrock-agentcore.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { "aws:SourceAccount": !Ref "AWS::AccountId" }
+              ArnLike: { "aws:SourceArn": !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*" }
+      # calls the tools runtime (changes/events) via SigV4 invoke -> needs A2A invoke
+      ManagedPolicyArns: [ !Ref RuntimeExecPolicy, !Ref BedrockInvokePolicy, !Ref A2AInvokePolicy ]
       Tags: [ { Key: component, Value: runtime }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
 
   RemediationRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Sub "${ProjectName}-${EnvName}-remediation-role"
-      AssumeRolePolicyDocument: *acTrust
-      ManagedPolicyArns: [ !Ref RuntimeExecPolicy, !Ref BedrockInvokePolicy ]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: bedrock-agentcore.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { "aws:SourceAccount": !Ref "AWS::AccountId" }
+              ArnLike: { "aws:SourceArn": !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*" }
+      # may call the tools runtime (runbooks) via SigV4 invoke -> needs A2A invoke
+      ManagedPolicyArns: [ !Ref RuntimeExecPolicy, !Ref BedrockInvokePolicy, !Ref A2AInvokePolicy ]
       Tags: [ { Key: component, Value: runtime }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
 
   ToolsRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: !Sub "${ProjectName}-${EnvName}-tools-role"
-      AssumeRolePolicyDocument: *acTrust
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: bedrock-agentcore.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { "aws:SourceAccount": !Ref "AWS::AccountId" }
+              ArnLike: { "aws:SourceArn": !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:*" }
       ManagedPolicyArns: [ !Ref RuntimeExecPolicy ]   # tools backend does NOT call Bedrock
       Tags: [ { Key: component, Value: gateway }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
 
@@ -136,7 +265,7 @@ Resources:
   ToolsRuntime:
     Type: AWS::BedrockAgentCore::Runtime
     Properties:
-      AgentRuntimeName: !Sub "${ProjectName}_${EnvName}_tools"
+      AgentRuntimeName: !Sub "${RuntimeNamePrefix}_tools"
       Description: Synthetic observability backends (metrics/logs/traces/changes/events/runbooks).
       AgentRuntimeArtifact: { ContainerConfiguration: { ContainerUri: !Ref ToolsImageUri } }
       NetworkConfiguration: { NetworkMode: PUBLIC }
@@ -149,43 +278,62 @@ Resources:
   TelemetryRuntime:
     Type: AWS::BedrockAgentCore::Runtime
     Properties:
-      AgentRuntimeName: !Sub "${ProjectName}_${EnvName}_telemetry"
+      AgentRuntimeName: !Sub "${RuntimeNamePrefix}_telemetry"
       Description: Telemetry specialist (A2A) - gathers metrics/logs/traces evidence.
       AgentRuntimeArtifact: { ContainerConfiguration: { ContainerUri: !Ref TelemetryImageUri } }
       NetworkConfiguration: { NetworkMode: PUBLIC }
       ProtocolConfiguration: A2A
       RoleArn: !GetAtt TelemetryRole.Arn
-      EnvironmentVariables: { MODEL_ID: !Ref ModelId, SRE_TOOLS_BASE_URL: !Ref ToolsBaseUrl, AWS_REGION: !Ref "AWS::Region" }
+      EnvironmentVariables:
+        MODEL_ID: !Ref ModelId
+        AWS_REGION: !Ref "AWS::Region"
+        SRE_TOOLS_RUNTIME_ARN: !GetAtt ToolsRuntime.AgentRuntimeArn   # legacy fallback
+        # P4: when set, ToolsClient routes through the Gateway over MCP (preferred).
+        SRE_GATEWAY_URL: !Ref GatewayUrl
+        SRE_GATEWAY_TOKEN_ENDPOINT: !Ref GatewayTokenEndpoint
+        SRE_GATEWAY_CLIENT_SECRET_ARN: !Ref GatewayCallerSecretArn
       Tags: { component: runtime, env: !Ref EnvName, usecase: sre }
 
   ChangeRuntime:
     Type: AWS::BedrockAgentCore::Runtime
     Properties:
-      AgentRuntimeName: !Sub "${ProjectName}_${EnvName}_change"
+      AgentRuntimeName: !Sub "${RuntimeNamePrefix}_change"
       Description: Change-correlation specialist (A2A) - correlates changes/events to the timeline.
       AgentRuntimeArtifact: { ContainerConfiguration: { ContainerUri: !Ref ChangeImageUri } }
       NetworkConfiguration: { NetworkMode: PUBLIC }
       ProtocolConfiguration: A2A
       RoleArn: !GetAtt ChangeRole.Arn
-      EnvironmentVariables: { MODEL_ID: !Ref ModelId, SRE_TOOLS_BASE_URL: !Ref ToolsBaseUrl, AWS_REGION: !Ref "AWS::Region" }
+      EnvironmentVariables:
+        MODEL_ID: !Ref ModelId
+        AWS_REGION: !Ref "AWS::Region"
+        SRE_TOOLS_RUNTIME_ARN: !GetAtt ToolsRuntime.AgentRuntimeArn   # legacy fallback
+        SRE_GATEWAY_URL: !Ref GatewayUrl
+        SRE_GATEWAY_TOKEN_ENDPOINT: !Ref GatewayTokenEndpoint
+        SRE_GATEWAY_CLIENT_SECRET_ARN: !Ref GatewayCallerSecretArn
       Tags: { component: runtime, env: !Ref EnvName, usecase: sre }
 
   RemediationRuntime:
     Type: AWS::BedrockAgentCore::Runtime
     Properties:
-      AgentRuntimeName: !Sub "${ProjectName}_${EnvName}_remediation"
+      AgentRuntimeName: !Sub "${RuntimeNamePrefix}_remediation"
       Description: Remediation specialist (A2A) - proposes HITL-gated fixes. Never auto-applies.
       AgentRuntimeArtifact: { ContainerConfiguration: { ContainerUri: !Ref RemediationImageUri } }
       NetworkConfiguration: { NetworkMode: PUBLIC }
       ProtocolConfiguration: A2A
       RoleArn: !GetAtt RemediationRole.Arn
-      EnvironmentVariables: { MODEL_ID: !Ref ModelId, SRE_TOOLS_BASE_URL: !Ref ToolsBaseUrl, AWS_REGION: !Ref "AWS::Region" }
+      EnvironmentVariables:
+        MODEL_ID: !Ref ModelId
+        AWS_REGION: !Ref "AWS::Region"
+        SRE_TOOLS_RUNTIME_ARN: !GetAtt ToolsRuntime.AgentRuntimeArn   # legacy fallback
+        SRE_GATEWAY_URL: !Ref GatewayUrl
+        SRE_GATEWAY_TOKEN_ENDPOINT: !Ref GatewayTokenEndpoint
+        SRE_GATEWAY_CLIENT_SECRET_ARN: !Ref GatewayCallerSecretArn
       Tags: { component: runtime, env: !Ref EnvName, usecase: sre }
 
   InvestigatorRuntime:
     Type: AWS::BedrockAgentCore::Runtime
     Properties:
-      AgentRuntimeName: !Sub "${ProjectName}_${EnvName}_investigator"
+      AgentRuntimeName: !Sub "${RuntimeNamePrefix}_investigator"
       Description: Investigator/hypothesis specialist (A2A) - hypothesis-driven RCA engine.
       AgentRuntimeArtifact: { ContainerConfiguration: { ContainerUri: !Ref InvestigatorImageUri } }
       NetworkConfiguration: { NetworkMode: PUBLIC }
@@ -193,26 +341,49 @@ Resources:
       RoleArn: !GetAtt InvestigatorRole.Arn
       EnvironmentVariables:
         MODEL_ID: !Ref ModelId
-        SRE_TOOLS_BASE_URL: !Ref ToolsBaseUrl
+        SRE_TOOLS_RUNTIME_ARN: !GetAtt ToolsRuntime.AgentRuntimeArn   # legacy fallback
         AWS_REGION: !Ref "AWS::Region"
-        TELEMETRY_AGENT_URL: !GetAtt TelemetryRuntime.AgentRuntimeArn
-        CHANGE_AGENT_URL: !GetAtt ChangeRuntime.AgentRuntimeArn
+        # P4: Gateway MCP tools (preferred when set).
+        SRE_GATEWAY_URL: !Ref GatewayUrl
+        SRE_GATEWAY_TOKEN_ENDPOINT: !Ref GatewayTokenEndpoint
+        SRE_GATEWAY_CLIENT_SECRET_ARN: !Ref GatewayCallerSecretArn
+        # P2: long-term memory. Empty -> investigator no-ops (safe).
+        SRE_MEMORY_ID: !Ref MemoryId
+        # A2A targets as AgentCore Runtime ARNs -> A2AClient uses SigV4 invoke_agent_runtime
+        TELEMETRY_AGENT_ARN: !GetAtt TelemetryRuntime.AgentRuntimeArn
+        CHANGE_AGENT_ARN: !GetAtt ChangeRuntime.AgentRuntimeArn
       Tags: { component: runtime, env: !Ref EnvName, usecase: sre }
 
   SupervisorRuntime:
     Type: AWS::BedrockAgentCore::Runtime
     Properties:
-      AgentRuntimeName: !Sub "${ProjectName}_${EnvName}_supervisor"
+      AgentRuntimeName: !Sub "${RuntimeNamePrefix}_supervisor"
       Description: Supervisor (HTTP) - entry point; orchestrates the investigation and remediation.
       AgentRuntimeArtifact: { ContainerConfiguration: { ContainerUri: !Ref SupervisorImageUri } }
       NetworkConfiguration: { NetworkMode: PUBLIC }
       ProtocolConfiguration: HTTP
       RoleArn: !GetAtt SupervisorRole.Arn
+      # P3: inbound JWT authorizer (only when JwtDiscoveryUrl is set). Enabling this means callers
+      # must present a Cognito Bearer token; SigV4 invoke no longer works for the supervisor.
+      AuthorizerConfiguration: !If
+        - JwtAuthEnabled
+        - CustomJWTAuthorizer:
+            DiscoveryUrl: !Ref JwtDiscoveryUrl
+            AllowedClients: !Ref JwtAllowedClients
+        - !Ref "AWS::NoValue"
+      # Pass the Authorization header through to the container so it can read the verified client_id.
+      RequestHeaderConfiguration: !If
+        - JwtAuthEnabled
+        - RequestHeaderAllowlist: [ "Authorization" ]
+        - !Ref "AWS::NoValue"
       EnvironmentVariables:
         MODEL_ID: !Ref ModelId
         AWS_REGION: !Ref "AWS::Region"
-        INVESTIGATOR_AGENT_URL: !GetAtt InvestigatorRuntime.AgentRuntimeArn
-        REMEDIATION_AGENT_URL: !GetAtt RemediationRuntime.AgentRuntimeArn
+        # P3: verified client_id -> tenant_id map. Empty -> supervisor trusts body tenant (pre-P3).
+        SRE_CLIENT_TENANT_MAP: !Ref ClientTenantMap
+        # A2A targets as AgentCore Runtime ARNs -> A2AClient uses SigV4 invoke_agent_runtime
+        INVESTIGATOR_AGENT_ARN: !GetAtt InvestigatorRuntime.AgentRuntimeArn
+        REMEDIATION_AGENT_ARN: !GetAtt RemediationRuntime.AgentRuntimeArn
       Tags: { component: runtime, env: !Ref EnvName, usecase: sre }
 
 Outputs:

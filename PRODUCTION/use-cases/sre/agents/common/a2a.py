@@ -117,13 +117,78 @@ def _rpc_error(rpc_id: Any, code: int, message: str) -> dict[str, Any]:
 
 # --------------------------- client ---------------------------
 
-class A2AClient:
-    """Call a specialist A2A agent by base URL, carrying tenant/scenario context."""
+def _is_agentcore_arn(target: str) -> bool:
+    """A target is an AgentCore Runtime ARN (cloud transport) vs an http(s) URL (local transport)."""
+    return target.startswith("arn:aws:bedrock-agentcore:")
 
-    def __init__(self, base_url: str, timeout: float = 120.0, bearer_token: str | None = None):
-        self.base_url = base_url.rstrip("/") + "/"
+
+def _build_jsonrpc_payload(text: str, context: RequestContext) -> dict[str, Any]:
+    """The A2A JSON-RPC `message/send` envelope. Identical on both transports — only the
+    transport (raw HTTP vs AgentCore InvokeAgentRuntime) differs."""
+    return {
+        "jsonrpc": "2.0",
+        "id": str(uuid.uuid4()),
+        "method": "message/send",
+        "params": {
+            "message": {
+                "role": "user",
+                "parts": [{"kind": "text", "text": text}],
+                "messageId": str(uuid.uuid4()),
+            },
+            "metadata": context.to_dict(),
+        },
+    }
+
+
+def _parts_text(parts: list[dict[str, Any]]) -> list[str]:
+    return [p.get("text", "") for p in parts if p.get("kind", "text") == "text"]
+
+
+def _extract_artifact_text(data: dict[str, Any], source: str) -> str:
+    """Pull the response text out of an A2A JSON-RPC result (shared by both transports).
+
+    Tolerates both result shapes the A2A spec allows:
+      - result.artifacts[].parts[]  (what our own build_a2a_app server returns)
+      - result.message.parts[]      (plain message result)
+      - result.parts[]              (bare message)
+    """
+    if "error" in data:
+        raise RuntimeError(f"A2A error from {source}: {data['error']}")
+    result = data.get("result") or {}
+    texts: list[str] = []
+    for a in result.get("artifacts") or []:
+        texts.extend(_parts_text(a.get("parts", [])))
+    if not texts:
+        msg = result.get("message") or (result if result.get("parts") else {})
+        texts.extend(_parts_text(msg.get("parts", [])))
+    return "\n".join(t for t in texts if t)
+
+
+class A2AClient:
+    """Call a specialist A2A agent, carrying tenant/scenario context.
+
+    `target` may be either:
+      - an http(s) base URL  -> raw httpx POST to the A2A root (local / single-host dev)
+      - an AgentCore Runtime ARN (``arn:aws:bedrock-agentcore:...:runtime/...``)
+        -> boto3 ``invoke_agent_runtime`` signed with SigV4 (cloud, same-account
+           service-to-service). The caller's runtime IAM role must hold
+           ``bedrock-agentcore:InvokeAgentRuntime`` on the target.
+
+    The transport is chosen by inspecting `target`, so the graph code is identical in both
+    modes — only the env var value changes (URL locally, ARN in the cloud).
+    """
+
+    def __init__(self, target: str, timeout: float = 120.0, bearer_token: str | None = None,
+                 qualifier: str = "DEFAULT"):
+        self.target = target
+        self.is_arn = _is_agentcore_arn(target)
         self.timeout = timeout
         self.bearer_token = bearer_token
+        self.qualifier = qualifier
+        if not self.is_arn:
+            self.base_url = target.rstrip("/") + "/"
+
+    # ---- local (http) transport ----
 
     def _headers(self) -> dict[str, str]:
         h = {"Content-Type": "application/json",
@@ -132,36 +197,68 @@ class A2AClient:
             h["Authorization"] = f"Bearer {self.bearer_token}"
         return h
 
-    def send(self, text: str, context: RequestContext) -> str:
-        payload = {
-            "jsonrpc": "2.0",
-            "id": str(uuid.uuid4()),
-            "method": "message/send",
-            "params": {
-                "message": {
-                    "role": "user",
-                    "parts": [{"kind": "text", "text": text}],
-                    "messageId": str(uuid.uuid4()),
-                },
-                "metadata": context.to_dict(),
-            },
-        }
+    def _send_http(self, payload: dict[str, Any]) -> dict[str, Any]:
         with httpx.Client(timeout=self.timeout) as client:
             resp = client.post(self.base_url, json=payload, headers=self._headers())
             resp.raise_for_status()
-            data = resp.json()
-        if "error" in data:
-            raise RuntimeError(f"A2A error from {self.base_url}: {data['error']}")
-        artifacts = (data.get("result") or {}).get("artifacts") or []
-        texts = []
-        for a in artifacts:
-            for p in a.get("parts", []):
-                if p.get("kind", "text") == "text":
-                    texts.append(p.get("text", ""))
-        return "\n".join(t for t in texts if t)
+            return resp.json()
+
+    # ---- cloud (AgentCore SigV4) transport ----
+
+    def _send_agentcore(self, payload: dict[str, Any]) -> dict[str, Any]:
+        import json as _json
+
+        import boto3  # imported lazily so local/test runs don't require AWS creds
+        from botocore.config import Config as _BotoConfig
+
+        # Nested A2A chains (investigator -> specialists -> tools, each an LLM round) can run for
+        # minutes. boto3's default 60s read timeout is far too short, so set generous timeouts and
+        # disable retries (the downstream work is not idempotent to blind retries).
+        _cfg = _BotoConfig(read_timeout=max(self.timeout, 300), connect_timeout=10,
+                           retries={"max_attempts": 0})
+        client = boto3.client("bedrock-agentcore", config=_cfg)
+        resp = client.invoke_agent_runtime(
+            agentRuntimeArn=self.target,
+            qualifier=self.qualifier,
+            runtimeSessionId=_runtime_session_id(),
+            payload=_json.dumps(payload).encode("utf-8"),
+        )
+        content_type = resp.get("contentType", "") or ""
+        body = resp.get("response")
+        if "text/event-stream" in content_type:
+            chunks = []
+            for line in body.iter_lines(chunk_size=10):
+                if not line:
+                    continue
+                line = line.decode("utf-8") if isinstance(line, bytes) else line
+                if line.startswith("data: "):
+                    chunks.append(line[6:])
+            raw = "".join(chunks)
+        else:
+            parts = []
+            for chunk in body:
+                parts.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk)
+            raw = "".join(parts)
+        try:
+            return _json.loads(raw)
+        except Exception as e:  # noqa: BLE001
+            raise RuntimeError(f"A2A error from {self.target}: non-JSON response: {raw[:300]}") from e
+
+    def send(self, text: str, context: RequestContext) -> str:
+        payload = _build_jsonrpc_payload(text, context)
+        data = self._send_agentcore(payload) if self.is_arn else self._send_http(payload)
+        return _extract_artifact_text(data, self.target)
 
     def agent_card(self) -> dict[str, Any]:
+        if self.is_arn:
+            raise RuntimeError("agent_card() is only available over the http transport, not AgentCore ARN")
         with httpx.Client(timeout=self.timeout) as client:
             resp = client.get(self.base_url + ".well-known/agent-card.json", headers=self._headers())
             resp.raise_for_status()
             return resp.json()
+
+
+def _runtime_session_id() -> str:
+    """AgentCore requires a session id of 33-256 chars; a bare uuid4 is only 36 but can dip below
+    the floor with some formats, so we prefix to be safely in-range."""
+    return f"sre-a2a-{uuid.uuid4().hex}{uuid.uuid4().hex}"

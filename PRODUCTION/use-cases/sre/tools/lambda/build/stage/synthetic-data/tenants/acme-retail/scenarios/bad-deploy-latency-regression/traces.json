@@ -1,0 +1,22 @@
+[
+  {
+    "trace_id": "acme-web-0163400",
+    "root_service": "web-storefront",
+    "duration_ms": 1860,
+    "ts": "2026-02-14T16:34:00Z",
+    "spans": [
+      {"service": "web-storefront", "op": "GET / (homepage render)", "duration_ms": 1860, "error": false},
+      {"service": "web-storefront", "op": "sync call product-api /availability", "duration_ms": 1760, "error": false, "note": "NEW in v3.2.0 — blocking on render path"},
+      {"service": "product-api", "op": "GET /availability", "duration_ms": 68, "error": false, "note": "fast; called serially many times"}
+    ]
+  },
+  {
+    "trace_id": "acme-web-0162000",
+    "root_service": "web-storefront",
+    "duration_ms": 392,
+    "ts": "2026-02-14T16:20:00Z",
+    "spans": [
+      {"service": "web-storefront", "op": "GET / (homepage render)", "duration_ms": 392, "error": false, "note": "pre-deploy: availability served from cache, async"}
+    ]
+  }
+]

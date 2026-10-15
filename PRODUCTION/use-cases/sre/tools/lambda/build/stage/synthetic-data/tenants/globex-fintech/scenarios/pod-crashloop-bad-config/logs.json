@@ -1,0 +1,9 @@
+[
+  {"service": "payments-svc", "level": "FATAL", "ts": "2026-02-16T11:03:12Z", "message": "startup failed: missing required config 'KAFKA_BROKERS' (env not set); refusing to start"},
+  {"service": "payments-svc", "level": "ERROR", "ts": "2026-02-16T11:03:12Z", "message": "process exiting with code 1"},
+  {"service": "payments-svc", "level": "FATAL", "ts": "2026-02-16T11:06:40Z", "message": "startup failed: missing required config 'KAFKA_BROKERS' (env not set); refusing to start"},
+  {"service": "payments-svc", "level": "INFO", "ts": "2026-02-16T11:02:30Z", "message": "booting payments-svc v5.1.0, loading config from ConfigMap payments-config-v5"},
+  {"service": "kafka", "level": "INFO", "ts": "2026-02-16T11:10:00Z", "message": "MSK cluster healthy: 3/3 brokers, 0 under-replicated partitions"},
+  {"service": "ledger-svc", "level": "INFO", "ts": "2026-02-16T11:10:00Z", "message": "consuming from kafka ledger-topic normally, lag 0"},
+  {"service": "api-gateway-svc", "level": "ERROR", "ts": "2026-02-16T11:08:00Z", "message": "HTTP 503 routing to payments-svc: no healthy upstream endpoints"}
+]

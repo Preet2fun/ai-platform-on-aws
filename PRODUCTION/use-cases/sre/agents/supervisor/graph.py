@@ -20,8 +20,12 @@ from langgraph.graph import StateGraph, END
 from agents.common.context import RequestContext
 from agents.common.a2a import A2AClient
 
-INVESTIGATOR_AGENT_URL = os.getenv("INVESTIGATOR_AGENT_URL", "")
-REMEDIATION_AGENT_URL = os.getenv("REMEDIATION_AGENT_URL", "")
+# A specialist target may be an http(s) URL (local) or an AgentCore Runtime ARN (cloud).
+# The *_AGENT_ARN form (set by CloudFormation) takes precedence; *_AGENT_URL stays for local dev.
+# A2AClient auto-detects which transport to use from the string, so this module stays identical
+# in both modes. If neither is set, we fall back to the in-process specialist handler.
+INVESTIGATOR_AGENT_URL = os.getenv("INVESTIGATOR_AGENT_ARN") or os.getenv("INVESTIGATOR_AGENT_URL", "")
+REMEDIATION_AGENT_URL = os.getenv("REMEDIATION_AGENT_ARN") or os.getenv("REMEDIATION_AGENT_URL", "")
 
 
 class SupervisorState(TypedDict, total=False):

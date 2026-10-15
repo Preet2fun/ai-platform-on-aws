@@ -1,0 +1,10 @@
+[
+  {"service": "payments-svc", "level": "ERROR", "ts": "2026-02-20T22:10:30Z", "message": "payment processor call failed: dial tcp: lookup api.processor.example: no such host"},
+  {"service": "payments-svc", "level": "ERROR", "ts": "2026-02-20T22:14:05Z", "message": "payment processor call failed: name resolution failed (SERVFAIL) for api.processor.example"},
+  {"service": "payments-svc", "level": "INFO", "ts": "2026-02-20T22:14:20Z", "message": "payment processor call succeeded (resolved OK): 200 in 248ms"},
+  {"service": "coredns", "level": "WARNING", "ts": "2026-02-20T22:11:00Z", "message": "SERVFAIL resolving api.processor.example: upstream resolver timeout (single upstream configured)"},
+  {"service": "coredns", "level": "INFO", "ts": "2026-02-20T22:05:10Z", "message": "reloaded Corefile: forward . 10.2.0.2 (single upstream), cache 5s"},
+  {"service": "payments-svc", "level": "INFO", "ts": "2026-02-20T22:12:00Z", "message": "pods healthy, no restarts; errors are per-request processor DNS lookups"},
+  {"service": "kafka", "level": "INFO", "ts": "2026-02-20T22:12:00Z", "message": "MSK healthy, 0 under-replicated partitions"},
+  {"service": "ledger-svc", "level": "INFO", "ts": "2026-02-20T22:12:00Z", "message": "kafka consume normal, lag 0"}
+]

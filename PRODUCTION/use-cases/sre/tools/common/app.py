@@ -12,7 +12,10 @@ routes against real CloudWatch.
 """
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException, Query
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 
 from . import fixtures as fx
 
@@ -99,6 +102,52 @@ def create_app(title: str = "SRE Synthetic Observability") -> FastAPI:
             return {"tenant_id": tenant_id, "runbooks": fx.get_runbooks(tenant_id, query, service)}
         except fx.TenantNotFound as e:
             raise HTTPException(status_code=404, detail=str(e))
+
+    # ---- AgentCore HTTP contract: /ping + /invocations ----
+    # When this backend runs as an AgentCore Runtime (HTTP protocol), the platform only forwards
+    # POST /invocations (JSON) and GET /ping. The six GET routes above cannot be reached through
+    # invoke_agent_runtime, so /invocations is a tool dispatcher: {"tool": "...", "params": {...}}.
+    # The GET routes are kept for local dev and for the P4 Gateway (OpenAPI -> MCP) mapping.
+
+    @app.get("/ping")
+    def ping():
+        return {"status": "Healthy"}
+
+    def _call_tool(tool: str, p: dict[str, Any]) -> dict[str, Any]:
+        tid = p.get("tenant_id")
+        sid = p.get("scenario_id")
+        if not tid:
+            raise HTTPException(status_code=400, detail="tenant_id is required")
+        if tool == "runbooks":
+            return {"tenant_id": tid, "runbooks": fx.get_runbooks(tid, p.get("query"), p.get("service"))}
+        # all other tools are scenario-scoped
+        _resolve(tid, sid)
+        if tool == "metrics":
+            return {"tenant_id": tid, "series": fx.get_metrics(tid, sid, p.get("service"), p.get("metric"), p.get("start"), p.get("end"))}
+        if tool == "logs":
+            return {"tenant_id": tid, "logs": fx.get_logs(tid, sid, p.get("service"), p.get("level"), p.get("contains"), p.get("start"), p.get("end"))}
+        if tool == "traces":
+            return {"tenant_id": tid, "traces": fx.get_traces(tid, sid, p.get("service"), bool(p.get("errors_only", False)), p.get("start"), p.get("end"))}
+        if tool == "changes":
+            return {"tenant_id": tid, "changes": fx.get_changes(tid, sid, p.get("service"), p.get("change_type"), p.get("start"), p.get("end"))}
+        if tool == "events":
+            return {"tenant_id": tid, "events": fx.get_events(tid, sid, p.get("service"), p.get("source"), p.get("start"), p.get("end"))}
+        raise HTTPException(status_code=400, detail=f"unknown tool: {tool}")
+
+    @app.post("/invocations")
+    async def invocations(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse(status_code=400, content={"error": "invalid JSON body"})
+        tool = body.get("tool")
+        params = body.get("params") or {}
+        if not tool:
+            return JSONResponse(status_code=400, content={"error": "missing 'tool'"})
+        try:
+            return _call_tool(tool, params)
+        except HTTPException as e:
+            return JSONResponse(status_code=e.status_code, content={"error": e.detail})
 
     return app
 

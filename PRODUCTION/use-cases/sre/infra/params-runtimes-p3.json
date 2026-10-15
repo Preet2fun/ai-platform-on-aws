@@ -1,0 +1,12 @@
+[
+  { "ParameterKey": "SupervisorImageUri",   "ParameterValue": "001961766007.dkr.ecr.us-east-1.amazonaws.com/sre-agentic-dev-supervisor:v5" },
+  { "ParameterKey": "InvestigatorImageUri", "ParameterValue": "001961766007.dkr.ecr.us-east-1.amazonaws.com/sre-agentic-dev-investigator:v4" },
+  { "ParameterKey": "TelemetryImageUri",    "ParameterValue": "001961766007.dkr.ecr.us-east-1.amazonaws.com/sre-agentic-dev-telemetry:v3" },
+  { "ParameterKey": "ChangeImageUri",       "ParameterValue": "001961766007.dkr.ecr.us-east-1.amazonaws.com/sre-agentic-dev-change-correlation:v3" },
+  { "ParameterKey": "RemediationImageUri",  "ParameterValue": "001961766007.dkr.ecr.us-east-1.amazonaws.com/sre-agentic-dev-remediation:v3" },
+  { "ParameterKey": "ToolsImageUri",        "ParameterValue": "001961766007.dkr.ecr.us-east-1.amazonaws.com/sre-agentic-dev-tools:v2" },
+  { "ParameterKey": "MemoryId",             "ParameterValue": "sre_agentic_dev_memory-etFo694V7V" },
+  { "ParameterKey": "JwtDiscoveryUrl",      "ParameterValue": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_wWlzIHoRM/.well-known/openid-configuration" },
+  { "ParameterKey": "JwtAllowedClients",    "ParameterValue": "66f0eb5m3ri4ad02d6hjjd37db,5cnjgnqi4o2avg62egtu6be4tt" },
+  { "ParameterKey": "ClientTenantMap",      "ParameterValue": "{\"66f0eb5m3ri4ad02d6hjjd37db\":\"acme-retail\",\"5cnjgnqi4o2avg62egtu6be4tt\":\"globex-fintech\"}" }
+]

@@ -1,0 +1,6 @@
+[
+  {"ts": "2026-02-10T14:08:10Z", "source": "k8s", "service": "product-api", "reason": "ScalingReplicaSet", "message": "Scaled up replica set product-api-2440 to 9"},
+  {"ts": "2026-02-10T14:08:40Z", "source": "k8s", "service": "product-api", "reason": "Started", "message": "9/9 product-api pods Running (v2.4.0)"},
+  {"ts": "2026-02-10T14:19:00Z", "source": "platform", "service": "product-db", "reason": "ConnectionLimit", "message": "RDS product-db reached max_connections=100; new connections refused"},
+  {"ts": "2026-02-10T14:21:30Z", "source": "k8s", "service": "checkout-api", "reason": "Unhealthy", "message": "Readiness probe degraded: upstream product-api 503"}
+]

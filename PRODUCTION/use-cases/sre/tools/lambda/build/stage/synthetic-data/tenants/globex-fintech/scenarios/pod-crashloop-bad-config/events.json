@@ -1,0 +1,6 @@
+[
+  {"ts": "2026-02-16T11:03:15Z", "source": "k8s", "service": "payments-svc", "reason": "BackOff", "message": "Back-off restarting failed container payments-svc in pod payments-svc-5100-xk2 (exit code 1)"},
+  {"ts": "2026-02-16T11:05:00Z", "source": "k8s", "service": "payments-svc", "reason": "CrashLoopBackOff", "message": "Pod payments-svc-5100-xk2 in CrashLoopBackOff (6 restarts)"},
+  {"ts": "2026-02-16T11:02:40Z", "source": "k8s", "service": "payments-svc", "reason": "Pulled", "message": "Successfully pulled image payments-svc:5.1.0 (image pull OK)"},
+  {"ts": "2026-02-16T11:07:00Z", "source": "k8s", "service": "payments-svc", "reason": "Unhealthy", "message": "healthy pod ratio below 50%, deployment degraded"}
+]

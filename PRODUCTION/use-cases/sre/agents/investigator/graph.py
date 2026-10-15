@@ -26,11 +26,18 @@ from agents.common.context import RequestContext
 from agents.common.llm import get_llm
 from agents.common.a2a import A2AClient
 from agents.common.tools_client import ToolsClient
+from agents.common.memory import SreMemory, incident_signature
 
 MAX_ROUNDS = int(os.getenv("INVESTIGATOR_MAX_ROUNDS", "2"))
 
-TELEMETRY_AGENT_URL = os.getenv("TELEMETRY_AGENT_URL", "")
-CHANGE_AGENT_URL = os.getenv("CHANGE_AGENT_URL", "")
+# A specialist target may be an http(s) URL (local) or an AgentCore Runtime ARN (cloud).
+# The *_AGENT_ARN form (set by CloudFormation) takes precedence; *_AGENT_URL stays for local dev.
+# A2AClient auto-detects the transport from the string; empty -> in-process fallback.
+TELEMETRY_AGENT_URL = os.getenv("TELEMETRY_AGENT_ARN") or os.getenv("TELEMETRY_AGENT_URL", "")
+CHANGE_AGENT_URL = os.getenv("CHANGE_AGENT_ARN") or os.getenv("CHANGE_AGENT_URL", "")
+
+# Long-term memory (episodic). No-op when SRE_MEMORY_ID is unset (local dev / tests).
+_MEMORY = SreMemory()
 
 
 class InvestigationState(TypedDict, total=False):
@@ -42,6 +49,8 @@ class InvestigationState(TypedDict, total=False):
     round: int
     conclusion: dict            # {root_cause, confirmed_hypothesis_id, timeline, remediation}
     thought_stream: list[str]   # human-readable steps (GUI left panel)
+    past_episodes: list[dict]   # [{text, score}] recalled from long-term memory at intake
+    signature: str              # compact incident signature (retrieval key + stored key)
 
 
 # --------------------------- helpers ---------------------------
@@ -84,7 +93,22 @@ def node_intake(state: InvestigationState) -> InvestigationState:
         f"Seed signals: {len(seed.get('recent_changes', []))} recent change(s), "
         f"{len(seed.get('error_logs', []))} error log(s), {len(seed.get('error_traces', []))} error trace(s)."
     ]
-    # P2 SEAM: retrieve matching past episodes from EPISODIC memory and seed hypotheses.
+
+    # P2: retrieve-before-act. Recall past incident episodes for this tenant that match the
+    # current incident signature, so hypothesis generation can reuse prior root causes/fixes.
+    sig = incident_signature(state.get("alarm", ""), seed)
+    state["signature"] = sig
+    episodes = _MEMORY.retrieve_episodes(ctx, sig)
+    state["past_episodes"] = episodes
+    if episodes:
+        state["thought_stream"].append(
+            f"Memory: recalled {len(episodes)} past episode(s) for tenant '{ctx.tenant_id}' "
+            f"(top score {episodes[0]['score']:.2f}). Using them to prime hypotheses."
+        )
+    elif _MEMORY.enabled:
+        state["thought_stream"].append(
+            f"Memory: no prior episodes matched for tenant '{ctx.tenant_id}'. Investigating fresh."
+        )
     return state
 
 
@@ -100,6 +124,17 @@ def node_generate(state: InvestigationState) -> InvestigationState:
     ctx = _ctx(state)
     user = (f"ALARM: {state.get('alarm','(none)')}\nTENANT: {ctx.tenant_id}\n"
             f"SEED SNAPSHOT (JSON):\n{json.dumps(state.get('seed_signals', {}), indent=2)[:8000]}")
+
+    # P2: prime generation with recalled past episodes (if any). These are PRIORS, not answers —
+    # the agent must still confirm/reject with current evidence, not assume history repeats.
+    episodes = state.get("past_episodes") or []
+    if episodes:
+        recalled = "\n\n".join(f"[past episode score={e['score']:.2f}]\n{e['text']}" for e in episodes[:3])
+        user += (
+            "\n\nPAST INCIDENT EPISODES for this tenant (similar signatures). Treat these as PRIORS "
+            "to consider — include a hypothesis matching the most likely prior root cause, but STILL "
+            "verify it against current evidence and do not assume it recurs:\n" + recalled[:6000]
+        )
     hs = _llm_json(_HYPO_SYS, user) or []
     hypotheses = []
     for h in hs:
@@ -213,8 +248,43 @@ def node_conclude(state: InvestigationState) -> InvestigationState:
     state["thought_stream"] = state.get("thought_stream", []) + [
         f"Conclusion ({concl.get('confidence','?')} confidence): {concl.get('root_cause','')[:160]}"
     ]
-    # P2 SEAM: write this episode (signature -> hypotheses -> confirmed/rejected -> remediation) to EPISODIC memory.
+
+    # P2: write-after-act. Persist this incident as an episode so future investigations for this
+    # tenant can recall it. Only write reasonably-grounded conclusions (skip low-confidence noise).
+    if _MEMORY.enabled and concl.get("confidence") in ("high", "medium"):
+        episode_text = _format_episode(state, concl)
+        rec_id = _MEMORY.write_episode(
+            ctx,
+            signature=state.get("signature", "") or state.get("alarm", ""),
+            episode_text=episode_text,
+        )
+        if rec_id:
+            state["thought_stream"].append(
+                f"Memory: wrote incident episode to long-term memory for tenant '{ctx.tenant_id}'."
+            )
     return state
+
+
+def _format_episode(state: InvestigationState, concl: dict) -> str:
+    """Render a compact, searchable episode body: what happened, what was confirmed/rejected, fix."""
+    lines: list[str] = []
+    lines.append(f"ALARM: {state.get('alarm','')}")
+    confirmed = [h for h in state.get("hypotheses", []) if h.get("status") == "confirmed"]
+    rejected = [h for h in state.get("hypotheses", []) if h.get("status") == "rejected"]
+    if confirmed:
+        lines.append("CONFIRMED:")
+        for h in confirmed:
+            lines.append(f"  - {h.get('statement','')} :: {h.get('reason','')[:300]}")
+    if rejected:
+        lines.append("REJECTED (red herrings to deprioritize next time):")
+        for h in rejected:
+            lines.append(f"  - {h.get('statement','')[:200]}")
+    lines.append(f"ROOT CAUSE: {concl.get('root_cause','')}")
+    if concl.get("remediation"):
+        lines.append(f"REMEDIATION: {concl.get('remediation','')}")
+    if concl.get("confidence"):
+        lines.append(f"CONFIDENCE: {concl.get('confidence')}")
+    return "\n".join(lines)
 
 
 def build_graph():

@@ -1,0 +1,204 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  SRE Agentic System - P4 Gateway. Fronts the synthetic observability tools as MCP tools behind
+  a single AgentCore Gateway (CUSTOM_JWT inbound, reusing the P3 Cognito pool). The tools are a
+  Lambda target invoked by the gateway's own LEAST-PRIVILEGE IAM role (lambda:InvokeFunction on
+  just this function - explicitly NOT AdministratorAccess). This replaces the direct-SigV4 tools
+  runtime path: tool access now flows through one policy-enforced choke point.
+
+Parameters:
+  ProjectName: { Type: String, Default: sre-agentic }
+  EnvName:     { Type: String, Default: dev }
+  GatewayName:
+    Type: String
+    Default: sreagenticdevgw
+    AllowedPattern: "[0-9a-zA-Z]{1,48}"
+    Description: Gateway name (alphanumeric, no hyphens, <=48).
+  JwtDiscoveryUrl:
+    Type: String
+    Description: Cognito OIDC discovery URL (from 04-identity.yaml).
+  JwtAllowedClients:
+    Type: CommaDelimitedList
+    Description: Allowed Cognito client IDs (the per-tenant M2M clients) for the gateway's JWT authorizer.
+  LambdaCodeS3Bucket: { Type: String, Description: S3 bucket holding the tools Lambda zip. }
+  LambdaCodeS3Key:    { Type: String, Description: S3 key of the tools Lambda zip. }
+
+Resources:
+  # ---------- Tools Lambda (the actual tool implementation) ----------
+  ToolsLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${EnvName}-tools-lambda-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Tags: [ { Key: component, Value: gateway }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
+
+  ToolsLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvName}-tools"
+      Runtime: python3.12
+      Architectures: [ arm64 ]
+      Handler: handler.lambda_handler
+      Role: !GetAtt ToolsLambdaRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref LambdaCodeS3Bucket
+        S3Key: !Ref LambdaCodeS3Key
+      Environment:
+        Variables:
+          SRE_SYNTH_DATA_ROOT: /var/task/synthetic-data/tenants
+      Tags: [ { Key: component, Value: gateway }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
+
+  # Allow the gateway service to invoke the tools Lambda (resource-based permission).
+  ToolsLambdaGatewayPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ToolsLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: bedrock-agentcore.amazonaws.com
+      SourceAccount: !Ref "AWS::AccountId"
+
+  # ---------- Gateway service role (LEAST PRIVILEGE) ----------
+  # Only permission: invoke the one tools Lambda. No wildcards, no AdministratorAccess.
+  GatewayRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${EnvName}-gateway-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: bedrock-agentcore.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { "aws:SourceAccount": !Ref "AWS::AccountId" }
+      Policies:
+        - PolicyName: invoke-tools-lambda
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: InvokeToolsLambda
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt ToolsLambda.Arn
+      Tags: [ { Key: component, Value: gateway }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
+
+  # ---------- The Gateway (MCP, CUSTOM_JWT inbound) ----------
+  Gateway:
+    Type: AWS::BedrockAgentCore::Gateway
+    Properties:
+      Name: !Ref GatewayName
+      Description: SRE synthetic observability tools exposed as MCP tools.
+      ProtocolType: MCP
+      RoleArn: !GetAtt GatewayRole.Arn
+      AuthorizerType: CUSTOM_JWT
+      AuthorizerConfiguration:
+        CustomJWTAuthorizer:
+          DiscoveryUrl: !Ref JwtDiscoveryUrl
+          AllowedClients: !Ref JwtAllowedClients
+      Tags: { component: gateway, env: !Ref EnvName, usecase: sre }
+
+  # ---------- Lambda target: the 6 observability tools ----------
+  ToolsTarget:
+    Type: AWS::BedrockAgentCore::GatewayTarget
+    Properties:
+      GatewayIdentifier: !Ref Gateway
+      Name: sretools
+      Description: Synthetic metrics/logs/traces/changes/events/runbooks (tenant-scoped).
+      CredentialProviderConfigurations:
+        - CredentialProviderType: GATEWAY_IAM_ROLE
+      TargetConfiguration:
+        Mcp:
+          Lambda:
+            LambdaArn: !GetAtt ToolsLambda.Arn
+            ToolSchema:
+              InlinePayload:
+                - Name: metrics
+                  Description: Tenant-scoped metric time-series for a scenario; optional service/metric/time-window filters.
+                  InputSchema:
+                    Type: object
+                    Properties:
+                      tenant_id:   { Type: string, Description: tenant slug (required) }
+                      scenario_id: { Type: string, Description: active incident scenario id (required) }
+                      service:     { Type: string }
+                      metric:      { Type: string }
+                      start:       { Type: string }
+                      end:         { Type: string }
+                    Required: [ tenant_id, scenario_id ]
+                - Name: logs
+                  Description: Tenant-scoped log lines; filter by service/level/substring/time-window.
+                  InputSchema:
+                    Type: object
+                    Properties:
+                      tenant_id:   { Type: string }
+                      scenario_id: { Type: string }
+                      service:     { Type: string }
+                      level:       { Type: string }
+                      contains:    { Type: string }
+                      start:       { Type: string }
+                      end:         { Type: string }
+                    Required: [ tenant_id, scenario_id ]
+                - Name: traces
+                  Description: Tenant-scoped trace summaries; optional errors_only / service / time-window.
+                  InputSchema:
+                    Type: object
+                    Properties:
+                      tenant_id:   { Type: string }
+                      scenario_id: { Type: string }
+                      service:     { Type: string }
+                      errors_only: { Type: boolean }
+                      start:       { Type: string }
+                      end:         { Type: string }
+                    Required: [ tenant_id, scenario_id ]
+                - Name: changes
+                  Description: Tenant-scoped deploys/config/scaling/infra changes; optional service/change_type/time-window.
+                  InputSchema:
+                    Type: object
+                    Properties:
+                      tenant_id:   { Type: string }
+                      scenario_id: { Type: string }
+                      service:     { Type: string }
+                      change_type: { Type: string }
+                      start:       { Type: string }
+                      end:         { Type: string }
+                    Required: [ tenant_id, scenario_id ]
+                - Name: events
+                  Description: Tenant-scoped k8s/platform events; optional service/source/time-window.
+                  InputSchema:
+                    Type: object
+                    Properties:
+                      tenant_id:   { Type: string }
+                      scenario_id: { Type: string }
+                      service:     { Type: string }
+                      source:      { Type: string }
+                      start:       { Type: string }
+                      end:         { Type: string }
+                    Required: [ tenant_id, scenario_id ]
+                - Name: runbooks
+                  Description: Tenant-level operational runbooks (not scenario-scoped); keyword/service search.
+                  InputSchema:
+                    Type: object
+                    Properties:
+                      tenant_id: { Type: string }
+                      query:     { Type: string }
+                      service:   { Type: string }
+                    Required: [ tenant_id ]
+
+Outputs:
+  GatewayId:
+    Value: !Ref Gateway
+  GatewayUrl:
+    Value: !GetAtt Gateway.GatewayUrl
+    Description: MCP endpoint. Specialists call this (JWT-authed) instead of the SigV4 tools runtime.
+  ToolsLambdaArn:
+    Value: !GetAtt ToolsLambda.Arn
+  ToolsTargetId:
+    Value: !GetAtt ToolsTarget.TargetId

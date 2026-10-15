@@ -1,0 +1,24 @@
+[
+  {
+    "trace_id": "globex-pay-0221400-fail",
+    "root_service": "payments-svc",
+    "duration_ms": 5020,
+    "ts": "2026-02-20T22:14:05Z",
+    "spans": [
+      {"service": "payments-svc", "op": "POST /charge", "duration_ms": 5020, "error": true},
+      {"service": "payments-svc", "op": "resolve api.processor.example", "duration_ms": 5000, "error": true, "error_detail": "DNS SERVFAIL / no such host — failed before TCP connect"},
+      {"service": "payment-processor", "op": "POST /v1/charge", "duration_ms": 0, "error": false, "note": "not reached — DNS failed first"}
+    ]
+  },
+  {
+    "trace_id": "globex-pay-0221420-ok",
+    "root_service": "payments-svc",
+    "duration_ms": 262,
+    "ts": "2026-02-20T22:14:20Z",
+    "spans": [
+      {"service": "payments-svc", "op": "POST /charge", "duration_ms": 262, "error": false},
+      {"service": "payments-svc", "op": "resolve api.processor.example", "duration_ms": 6, "error": false, "note": "resolved from cache"},
+      {"service": "payment-processor", "op": "POST /v1/charge", "duration_ms": 248, "error": false, "note": "processor healthy when reached"}
+    ]
+  }
+]

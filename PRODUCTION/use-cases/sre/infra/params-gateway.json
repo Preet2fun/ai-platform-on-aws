@@ -1,0 +1,6 @@
+[
+  { "ParameterKey": "JwtDiscoveryUrl",   "ParameterValue": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_wWlzIHoRM/.well-known/openid-configuration" },
+  { "ParameterKey": "JwtAllowedClients", "ParameterValue": "66f0eb5m3ri4ad02d6hjjd37db,5cnjgnqi4o2avg62egtu6be4tt,62qumqhsk7tnhsg817j2gjhc48" },
+  { "ParameterKey": "LambdaCodeS3Bucket", "ParameterValue": "sre-agentic-dev-artifacts-001961766007" },
+  { "ParameterKey": "LambdaCodeS3Key",    "ParameterValue": "tools-lambda/tools-lambda-v1.zip" }
+]

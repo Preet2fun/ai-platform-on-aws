@@ -1,0 +1,135 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  SRE Agentic System - P3 Identity (inbound auth). A Cognito user pool with one machine-to-machine
+  (client-credentials) app client PER TENANT. The supervisor runtime is fronted by an AgentCore
+  inbound JWT authorizer that validates these tokens. The supervisor then derives the tenant from
+  the VERIFIED client_id claim (never from the request body), so a caller cannot spoof another
+  tenant. One app client per tenant is the simple, trustworthy mapping for a small tenant set.
+
+  SCALE PATH (documented, not built here): at many tenants, replace the client_id->tenant map with
+  per-tenant resource-server SCOPES (e.g. sre/{tenant}) so a single client requests a tenant scope,
+  or a pre-token-generation Lambda (Cognito Essentials) that stamps a custom tenant_id claim.
+
+  M2M requires a resource server + a scope so the /oauth2/token endpoint will mint client-credentials
+  tokens. The scope only gates issuance; the TENANT identity comes from the verified client_id.
+
+Parameters:
+  ProjectName: { Type: String, Default: sre-agentic }
+  EnvName:     { Type: String, Default: dev }
+  DomainPrefix:
+    Type: String
+    Default: sre-agentic-dev-auth
+    Description: Globally-unique Cognito Hosted-UI/token domain prefix.
+
+Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${ProjectName}-${EnvName}-pool"
+      # No human sign-up: this pool only issues M2M (client-credentials) tokens to agent callers.
+      AdminCreateUserConfig: { AllowAdminCreateUserOnly: true }
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      UserPoolTags: { component: identity, env: !Ref EnvName, usecase: sre }
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref DomainPrefix
+      UserPoolId: !Ref UserPool
+
+  # Resource server defines the scope that M2M clients request. Scope value at the token endpoint
+  # is "<identifier>/<scope-name>" => "sre-api/invoke".
+  ResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      UserPoolId: !Ref UserPool
+      Identifier: sre-api
+      Name: !Sub "${ProjectName}-${EnvName}-resource-server"
+      Scopes:
+        - ScopeName: invoke
+          ScopeDescription: Permission to invoke the SRE supervisor agent.
+
+  # One M2M app client per tenant. The client_id of each is what the supervisor maps to a tenant.
+  AcmeRetailClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: ResourceServer
+    Properties:
+      ClientName: !Sub "${ProjectName}-${EnvName}-acme-retail"
+      UserPoolId: !Ref UserPool
+      GenerateSecret: true                       # M2M clients use client_id + client_secret
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [ client_credentials ]
+      AllowedOAuthScopes: [ "sre-api/invoke" ]
+      SupportedIdentityProviders: [ COGNITO ]
+      ExplicitAuthFlows: [ ALLOW_REFRESH_TOKEN_AUTH ]
+      AccessTokenValidity: 1
+      TokenValidityUnits: { AccessToken: hours }
+
+  GlobexFintechClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: ResourceServer
+    Properties:
+      ClientName: !Sub "${ProjectName}-${EnvName}-globex-fintech"
+      UserPoolId: !Ref UserPool
+      GenerateSecret: true
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [ client_credentials ]
+      AllowedOAuthScopes: [ "sre-api/invoke" ]
+      SupportedIdentityProviders: [ COGNITO ]
+      ExplicitAuthFlows: [ ALLOW_REFRESH_TOKEN_AUTH ]
+      AccessTokenValidity: 1
+      TokenValidityUnits: { AccessToken: hours }
+
+  # P4: a dedicated M2M client for SERVICE-TO-SERVICE calls (specialist runtimes -> Gateway).
+  # This is NOT a tenant identity — tenant rides in the tool arguments. Its secret is copied into
+  # Secrets Manager post-deploy so specialists read it at runtime (never in code/plain env).
+  GatewayCallerClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: ResourceServer
+    Properties:
+      ClientName: !Sub "${ProjectName}-${EnvName}-gateway-caller"
+      UserPoolId: !Ref UserPool
+      GenerateSecret: true
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [ client_credentials ]
+      AllowedOAuthScopes: [ "sre-api/invoke" ]
+      SupportedIdentityProviders: [ COGNITO ]
+      ExplicitAuthFlows: [ ALLOW_REFRESH_TOKEN_AUTH ]
+      AccessTokenValidity: 1
+      TokenValidityUnits: { AccessToken: hours }
+
+  # Secrets Manager secret that will hold {"client_id","client_secret"} for the gateway-caller.
+  # Created empty here; populated by the deploy step (Cognito-generated secret isn't a CFN attr).
+  GatewayCallerSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${ProjectName}-${EnvName}-gateway-caller"
+      Description: Cognito M2M client_id/client_secret used by specialist runtimes to call the Gateway.
+      Tags: [ { Key: component, Value: identity }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
+
+Outputs:
+  UserPoolId:
+    Value: !Ref UserPool
+  DiscoveryUrl:
+    Value: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}/.well-known/openid-configuration"
+    Description: Pass to the supervisor runtime AuthorizerConfiguration.CustomJWTAuthorizer.DiscoveryUrl
+  TokenEndpoint:
+    Value: !Sub "https://${DomainPrefix}.auth.${AWS::Region}.amazoncognito.com/oauth2/token"
+  AcmeRetailClientId:
+    Value: !Ref AcmeRetailClient
+    Description: client_id for tenant acme-retail (supervisor maps this -> acme-retail)
+  GlobexFintechClientId:
+    Value: !Ref GlobexFintechClient
+    Description: client_id for tenant globex-fintech (supervisor maps this -> globex-fintech)
+  GatewayCallerClientId:
+    Value: !Ref GatewayCallerClient
+    Description: client_id used by specialist runtimes to obtain a Gateway token (service-to-service)
+  GatewayCallerSecretArn:
+    Value: !Ref GatewayCallerSecret
+    Description: Secrets Manager ARN holding the gateway-caller client_id/client_secret

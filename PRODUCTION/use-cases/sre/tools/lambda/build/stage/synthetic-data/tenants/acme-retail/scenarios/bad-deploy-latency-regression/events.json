@@ -1,0 +1,4 @@
+[
+  {"ts": "2026-02-14T16:28:10Z", "source": "k8s", "service": "web-storefront", "reason": "Started", "message": "web-storefront v3.2.0 rollout complete, 6/6 pods Running"},
+  {"ts": "2026-02-14T16:30:00Z", "source": "platform", "service": "web-storefront", "reason": "LatencyStep", "message": "p95 latency step change detected at deploy boundary (390ms -> 1810ms)"}
+]

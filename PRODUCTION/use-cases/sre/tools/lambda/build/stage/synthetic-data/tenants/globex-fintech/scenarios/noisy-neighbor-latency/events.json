@@ -1,0 +1,6 @@
+[
+  {"ts": "2026-02-18T13:40:00Z", "source": "k8s", "service": "ledger-reconciler", "reason": "Scheduled", "message": "Successfully assigned ledger-reconciler-9931 to node ip-10-2-3-44 (co-located with auth-svc-77, auth-svc-81)"},
+  {"ts": "2026-02-18T13:42:00Z", "source": "k8s", "service": "node:ip-10-2-3-44", "reason": "NodeCPUPressure", "message": "Node ip-10-2-3-44 CPU utilization 98%"},
+  {"ts": "2026-02-18T13:45:00Z", "source": "k8s", "service": "auth-svc", "reason": "CPUThrottling", "message": "Containers auth-svc-77/81 throttled (cfs) on node ip-10-2-3-44"},
+  {"ts": "2026-02-18T14:12:00Z", "source": "k8s", "service": "ledger-reconciler", "reason": "Completed", "message": "ledger-reconciler-9931 completed; node ip-10-2-3-44 CPU back to ~46%"}
+]

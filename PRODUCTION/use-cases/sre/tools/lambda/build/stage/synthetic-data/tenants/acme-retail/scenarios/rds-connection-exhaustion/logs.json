@@ -1,0 +1,12 @@
+[
+  {"service": "product-db", "level": "WARNING", "ts": "2026-02-10T14:14:30Z", "message": "FATAL: remaining connection slots are reserved for non-replication superuser connections"},
+  {"service": "product-db", "level": "ERROR", "ts": "2026-02-10T14:18:05Z", "message": "FATAL: sorry, too many clients already"},
+  {"service": "product-db", "level": "ERROR", "ts": "2026-02-10T14:22:11Z", "message": "FATAL: sorry, too many clients already"},
+  {"service": "product-api", "level": "ERROR", "ts": "2026-02-10T14:17:40Z", "message": "TimeoutError: connection acquisition timeout after 5000ms (pool exhausted, size=8, pending=37)"},
+  {"service": "product-api", "level": "WARNING", "ts": "2026-02-10T14:12:00Z", "message": "slow query detected: SELECT * FROM products p LEFT JOIN inventory i ... executed per-item (N+1), 220ms avg"},
+  {"service": "checkout-api", "level": "ERROR", "ts": "2026-02-10T14:20:12Z", "message": "upstream product-api returned 503; connection acquisition timeout propagated"},
+  {"service": "checkout-api", "level": "ERROR", "ts": "2026-02-10T14:22:30Z", "message": "HTTP 500 returned to client: failed to load product availability for checkout"},
+  {"service": "checkout-api", "level": "INFO", "ts": "2026-02-10T14:05:00Z", "message": "checkout flow nominal, p95 240ms"},
+  {"service": "payment-gateway", "level": "INFO", "ts": "2026-02-10T14:21:00Z", "message": "payment authorization succeeded, latency 208ms"},
+  {"service": "cache", "level": "INFO", "ts": "2026-02-10T14:20:00Z", "message": "redis hit_rate 93.8%, memory 42% used, no evictions pressure"}
+]

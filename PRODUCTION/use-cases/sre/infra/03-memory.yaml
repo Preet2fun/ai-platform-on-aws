@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  SRE Agentic System - P2 Memory. One AgentCore Memory resource with EPISODIC + SEMANTIC
+  long-term strategies, tenant-scoped by namespace (actorId = tenant_id). The investigator
+  writes incident episodes at conclude and recalls them at intake (retrieve-before-act).
+  Also grants the investigator runtime role the Memory data-plane permissions.
+
+  Namespaces (tenant isolation): sre/{actorId}/episodes and sre/{actorId}/facts, where the
+  agent passes actorId = tenant_id. A retrieve for one tenant can never match another tenant.
+
+Parameters:
+  ProjectName: { Type: String, Default: sre-agentic }
+  EnvName:     { Type: String, Default: dev }
+  MemoryName:
+    Type: String
+    Default: sre_agentic_dev_memory
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9_]{0,47}"
+    Description: AgentCore Memory resource name (underscores only, no hyphens).
+  EventExpiryDays:
+    Type: Number
+    Default: 90
+    MinValue: 7
+    MaxValue: 365
+    Description: How long raw events are retained before expiry.
+  InvestigatorRoleName:
+    Type: String
+    Default: sre-agentic-dev-investigator-role
+    Description: Name of the investigator runtime execution role (from 02-runtimes.yaml) to grant Memory data-plane access.
+
+Resources:
+  SreMemory:
+    Type: AWS::BedrockAgentCore::Memory
+    Properties:
+      Name: !Ref MemoryName
+      Description: SRE incident long-term memory (episodic incidents + semantic facts), per-tenant namespaced.
+      EventExpiryDuration: !Ref EventExpiryDays
+      # Our investigator's episodic recall uses DIRECT memory records (batch_create_memory_records
+      # + retrieve_memory_records) in the namespace sre/{tenant}/episodes. Direct records work on
+      # ANY namespace and do NOT require a matching strategy, so the episodic path functions with
+      # the strategies below alone. We attach a SEMANTIC strategy for optional async fact extraction
+      # from events (tenant-scoped namespace). An EPISODIC *strategy* (for auto-reflection) is a
+      # future enhancement — it has extra reflection-namespace/role constraints we don't need for
+      # the direct-record episodic path.
+      MemoryStrategies:
+        - SemanticMemoryStrategy:
+            Name: sre_facts
+            Description: Durable tenant facts (services, resources, prior findings).
+            Namespaces:
+              - "sre/{actorId}/facts"
+      Tags:
+        component: memory
+        env: !Ref EnvName
+        usecase: sre
+
+  # Data-plane permissions for the investigator runtime role to read/write memory.
+  # Scoped to this specific memory resource.
+  MemoryDataPlanePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${ProjectName}-${EnvName}-memory-dataplane"
+      Roles:
+        - !Ref InvestigatorRoleName
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: MemoryDataPlane
+            Effect: Allow
+            Action:
+              - "bedrock-agentcore:CreateEvent"
+              - "bedrock-agentcore:GetEvent"
+              - "bedrock-agentcore:ListEvents"
+              - "bedrock-agentcore:ListActors"
+              - "bedrock-agentcore:ListSessions"
+              - "bedrock-agentcore:RetrieveMemoryRecords"
+              - "bedrock-agentcore:GetMemoryRecord"
+              - "bedrock-agentcore:ListMemoryRecords"
+              - "bedrock-agentcore:BatchCreateMemoryRecords"
+              - "bedrock-agentcore:BatchUpdateMemoryRecords"
+              - "bedrock-agentcore:BatchDeleteMemoryRecords"
+              - "bedrock-agentcore:ListMemoryExtractionJobs"
+              - "bedrock-agentcore:StartMemoryExtractionJob"
+            Resource:
+              - !GetAtt SreMemory.MemoryArn
+              - !Sub "${SreMemory.MemoryArn}/*"
+
+Outputs:
+  MemoryId:
+    Value: !GetAtt SreMemory.MemoryId
+    Description: Pass this to the investigator runtime as SRE_MEMORY_ID.
+  MemoryArn:
+    Value: !GetAtt SreMemory.MemoryArn

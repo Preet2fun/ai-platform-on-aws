@@ -1,0 +1,5 @@
+[
+  {"ts": "2026-02-12T09:40:02Z", "source": "platform", "service": "cache", "reason": "MassKeyExpiry", "message": "ElastiCache catalog:* keyspace mass expiry (~11.8k keys) within 2s"},
+  {"ts": "2026-02-12T09:43:30Z", "source": "platform", "service": "product-db", "reason": "ReadThroughputSpike", "message": "RDS product-db read throughput spiked ~14x baseline"},
+  {"ts": "2026-02-12T10:00:00Z", "source": "platform", "service": "cache", "reason": "HitRateRecovered", "message": "ElastiCache hit_rate recovering past 68%"}
+]
