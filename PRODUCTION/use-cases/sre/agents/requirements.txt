@@ -7,3 +7,7 @@ uvicorn[standard]>=0.29
 httpx>=0.27
 boto3>=1.35
 pyyaml>=6.0
+
+# P6 observability: AWS Distro for OpenTelemetry. Auto-instruments FastAPI/httpx/boto3 and lets
+# us emit custom GenAI-convention spans across the delegation chain for eval-driven error analysis.
+aws-opentelemetry-distro>=0.18.0

@@ -27,6 +27,7 @@ from agents.common.llm import get_llm
 from agents.common.a2a import A2AClient
 from agents.common.tools_client import ToolsClient
 from agents.common.memory import SreMemory, incident_signature
+from agents.common import tracing
 
 MAX_ROUNDS = int(os.getenv("INVESTIGATOR_MAX_ROUNDS", "2"))
 
@@ -59,10 +60,17 @@ def _ctx(state: InvestigationState) -> RequestContext:
     return RequestContext.from_dict(state["context"])
 
 
-def _llm_json(system: str, user: str) -> Any:
+def _llm_json(system: str, user: str, *, step: str = "llm") -> Any:
     llm = get_llm()
-    resp = llm.invoke([("system", system), ("user", user)])
-    text = resp.content if hasattr(resp, "content") else str(resp)
+    model = os.getenv("MODEL_ID", "")
+    with tracing.span(f"llm.{step}", kind="llm") as sp:
+        resp = llm.invoke([("system", system), ("user", user)])
+        text = resp.content if hasattr(resp, "content") else str(resp)
+        usage = getattr(resp, "usage_metadata", None) or {}
+        tracing.record_llm(
+            sp, model=model, system=system, user=user, output=str(text),
+            input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens"),
+        )
     # tolerate fenced code blocks
     text = text.strip()
     if text.startswith("```"):
@@ -135,7 +143,7 @@ def node_generate(state: InvestigationState) -> InvestigationState:
             "to consider — include a hypothesis matching the most likely prior root cause, but STILL "
             "verify it against current evidence and do not assume it recurs:\n" + recalled[:6000]
         )
-    hs = _llm_json(_HYPO_SYS, user) or []
+    hs = _llm_json(_HYPO_SYS, user, step="generate_hypotheses") or []
     hypotheses = []
     for h in hs:
         hypotheses.append({
@@ -156,17 +164,27 @@ def node_generate(state: InvestigationState) -> InvestigationState:
 
 
 def _delegate_telemetry(question: str, ctx: RequestContext) -> str:
-    if TELEMETRY_AGENT_URL:
-        return A2AClient(TELEMETRY_AGENT_URL).send(question, ctx)
-    from agents.telemetry.agent import handle as tele_handle  # local fallback
-    return tele_handle(question, ctx)
+    with tracing.span("a2a.delegate.telemetry", context=ctx, kind="delegation",
+                      attrs={"sre.delegate.target": "telemetry", "sre.delegate.question": question}) as sp:
+        if TELEMETRY_AGENT_URL:
+            out = A2AClient(TELEMETRY_AGENT_URL).send(question, ctx)
+        else:
+            from agents.telemetry.agent import handle as tele_handle  # local fallback
+            out = tele_handle(question, ctx)
+        tracing._set(sp, "sre.delegate.response", out)
+        return out
 
 
 def _delegate_change(question: str, ctx: RequestContext) -> str:
-    if CHANGE_AGENT_URL:
-        return A2AClient(CHANGE_AGENT_URL).send(question, ctx)
-    from agents.change_correlation.agent import handle as chg_handle  # local fallback
-    return chg_handle(question, ctx)
+    with tracing.span("a2a.delegate.change", context=ctx, kind="delegation",
+                      attrs={"sre.delegate.target": "change", "sre.delegate.question": question}) as sp:
+        if CHANGE_AGENT_URL:
+            out = A2AClient(CHANGE_AGENT_URL).send(question, ctx)
+        else:
+            from agents.change_correlation.agent import handle as chg_handle  # local fallback
+            out = chg_handle(question, ctx)
+        tracing._set(sp, "sre.delegate.response", out)
+        return out
 
 
 def node_gather(state: InvestigationState) -> InvestigationState:
@@ -197,7 +215,7 @@ def node_evaluate(state: InvestigationState) -> InvestigationState:
     hyps = state["hypotheses"]
     user = (f"OPEN HYPOTHESES:\n{json.dumps([{k:h[k] for k in ('id','statement','confirm_if','reject_if')} for h in hyps], indent=2)}\n\n"
             f"EVIDENCE:\nTELEMETRY:\n{state['evidence'].get('telemetry','')}\n\nCHANGES:\n{state['evidence'].get('changes','')}")
-    verdicts = _llm_json(_EVAL_SYS, user) or []
+    verdicts = _llm_json(_EVAL_SYS, user, step="evaluate_hypotheses") or []
     vmap = {v.get("id"): v for v in verdicts}
     for h in hyps:
         v = vmap.get(h["id"])
@@ -241,7 +259,7 @@ def node_conclude(state: InvestigationState) -> InvestigationState:
     user = (f"ALARM: {state.get('alarm','')}\n"
             f"HYPOTHESES (final):\n{json.dumps(state['hypotheses'], indent=2)[:10000]}\n\n"
             f"EVIDENCE:\n{json.dumps(state.get('evidence', {}), indent=2)[:6000]}")
-    concl = _llm_json(_CONCLUDE_SYS, user) or {
+    concl = _llm_json(_CONCLUDE_SYS, user, step="conclude") or {
         "root_cause": "Inconclusive", "confirmed_hypothesis_id": None,
         "timeline": [], "remediation": "", "confidence": "low"}
     state["conclusion"] = concl
@@ -311,4 +329,17 @@ def run_investigation(alarm: str, ctx: RequestContext) -> InvestigationState:
     if _GRAPH is None:
         _GRAPH = build_graph()
     init: InvestigationState = {"context": ctx.to_dict(), "alarm": alarm}
-    return _GRAPH.invoke(init)
+    with tracing.span("investigation", context=ctx, kind="investigation",
+                      attrs={"sre.alarm": alarm}) as sp:
+        out = _GRAPH.invoke(init)
+        # Stamp top-level eval signals on the root span: outcome, confidence, hypothesis tallies.
+        concl = out.get("conclusion", {}) or {}
+        hyps = out.get("hypotheses", []) or []
+        tracing._set(sp, "sre.conclusion.confidence", concl.get("confidence"))
+        tracing._set(sp, "sre.conclusion.confirmed_hypothesis_id", concl.get("confirmed_hypothesis_id"))
+        tracing._set(sp, "sre.conclusion.root_cause", concl.get("root_cause"))
+        tracing._set(sp, "sre.hypotheses.total", len(hyps))
+        tracing._set(sp, "sre.hypotheses.confirmed", len([h for h in hyps if h.get("status") == "confirmed"]))
+        tracing._set(sp, "sre.hypotheses.rejected", len([h for h in hyps if h.get("status") == "rejected"]))
+        tracing._set(sp, "sre.memory.recalled_episodes", len(out.get("past_episodes", []) or []))
+        return out

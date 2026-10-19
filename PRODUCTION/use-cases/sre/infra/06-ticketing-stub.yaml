@@ -1,0 +1,80 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  SRE Agentic System - P4 credential-vault demo: a STUB 'ticketing' API (Lambda + Function URL).
+  Stands in for a real ticketing SaaS. Fronted by the Gateway as an OpenAPI target with an
+  API-KEY credential provider; the stub reports whether the gateway injected the key, proving the
+  vault -> gateway -> downstream-API credential-injection pattern without a real external account.
+
+Parameters:
+  ProjectName: { Type: String, Default: sre-agentic }
+  EnvName:     { Type: String, Default: dev }
+
+Resources:
+  TicketingStubRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${EnvName}-ticketing-stub-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Tags: [ { Key: component, Value: gateway }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
+
+  TicketingStub:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${EnvName}-ticketing-stub"
+      Runtime: python3.12
+      Architectures: [ arm64 ]
+      Handler: index.lambda_handler
+      Role: !GetAtt TicketingStubRole.Arn
+      Timeout: 15
+      MemorySize: 128
+      Code:
+        ZipFile: |
+          import json, uuid
+          API_KEY_HEADER = "x-api-key"
+          def lambda_handler(event, context):
+              headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
+              received_key = headers.get(API_KEY_HEADER)
+              try:
+                  payload = json.loads(event.get("body") or "{}")
+              except Exception:
+                  payload = {}
+              resp = {
+                  "ticket_id": f"SRE-{uuid.uuid4().hex[:8].upper()}",
+                  "status": "created",
+                  "received_auth": bool(received_key),
+                  "summary": payload.get("summary", ""),
+                  "tenant_id": payload.get("tenant_id", ""),
+              }
+              return {"statusCode": 200, "headers": {"Content-Type": "application/json"}, "body": json.dumps(resp)}
+      Tags: [ { Key: component, Value: gateway }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
+
+  # REST API in front of the stub Lambda. The Gateway reaches API Gateway via its service role
+  # (no public Lambda Function URL needed — avoids account-level public-URL blocks). The gateway
+  # injects the API key header on the outbound call; API Gateway here does not itself require a
+  # key (demo), the stub just reports whether the injected header arrived.
+  TicketingApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "${ProjectName}-${EnvName}-ticketing-api"
+      ProtocolType: HTTP
+      Target: !GetAtt TicketingStub.Arn
+
+  TicketingApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt TicketingStub.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${TicketingApi}/*"
+
+Outputs:
+  TicketingApiEndpoint:
+    Value: !GetAtt TicketingApi.ApiEndpoint
+    Description: Base URL of the stub ticketing API (the OpenAPI target server).

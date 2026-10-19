@@ -1,0 +1,12 @@
+[
+  {
+    "credentialProviderType": "API_KEY",
+    "credentialProvider": {
+      "apiKeyCredentialProvider": {
+        "providerArn": "arn:aws:bedrock-agentcore:us-east-1:001961766007:token-vault/default/apikeycredentialprovider/sre-ticketing-apikey",
+        "credentialLocation": "HEADER",
+        "credentialParameterName": "X-Api-Key"
+      }
+    }
+  }
+]

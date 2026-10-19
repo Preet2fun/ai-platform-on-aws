@@ -1,0 +1,9 @@
+{
+  "mcp": {
+    "openApiSchema": {
+      "s3": {
+        "uri": "s3://sre-agentic-dev-artifacts-001961766007/schemas/ticketing-openapi.json"
+      }
+    }
+  }
+}

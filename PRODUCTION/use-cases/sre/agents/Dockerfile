@@ -37,5 +37,8 @@ ENV AGENT_MODULE=${AGENT_MODULE}
 ENV PORT=${PORT}
 EXPOSE ${PORT}
 
-# Each main.py exposes `app` (FastAPI) and binds 0.0.0.0:$PORT
-CMD ["sh", "-c", "python3 -m uvicorn ${AGENT_MODULE}:app --host 0.0.0.0 --port ${PORT}"]
+# Each main.py exposes `app` (FastAPI) and binds 0.0.0.0:$PORT.
+# P6: run under `opentelemetry-instrument` so ADOT auto-instruments FastAPI/httpx/boto3 and
+# exports spans/traces to CloudWatch (when AGENT_OBSERVABILITY_ENABLED=true is set on the runtime).
+# When observability env vars are absent (local dev), opentelemetry-instrument is a harmless no-op.
+CMD ["sh", "-c", "opentelemetry-instrument python3 -m uvicorn ${AGENT_MODULE}:app --host 0.0.0.0 --port ${PORT}"]

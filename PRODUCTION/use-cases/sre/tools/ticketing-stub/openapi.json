@@ -1,0 +1,54 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "SRE Ticketing (demo)",
+    "version": "1.0.0",
+    "description": "Create an incident ticket. Demo stub for the credential-vault pattern."
+  },
+  "servers": [
+    { "url": "https://qu9cy8v0b7.execute-api.us-east-1.amazonaws.com" }
+  ],
+  "paths": {
+    "/tickets": {
+      "post": {
+        "operationId": "create_ticket",
+        "summary": "Create an incident ticket for a confirmed root cause.",
+        "description": "Opens a ticket in the ticketing system. The API key is injected by the gateway from the token vault; callers never provide it.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "summary": { "type": "string", "description": "Short incident summary / proposed remediation." },
+                  "tenant_id": { "type": "string", "description": "Tenant the incident belongs to." }
+                },
+                "required": ["summary", "tenant_id"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ticket created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ticket_id": { "type": "string" },
+                    "status": { "type": "string" },
+                    "received_auth": { "type": "boolean" },
+                    "summary": { "type": "string" },
+                    "tenant_id": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

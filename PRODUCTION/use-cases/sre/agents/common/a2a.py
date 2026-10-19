@@ -23,6 +23,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .context import RequestContext
+from . import tracing
 
 A2A_PORT = int(os.getenv("A2A_PORT", "9000"))
 
@@ -83,15 +84,20 @@ def build_a2a_app(
         msg = params.get("message") or {}
         parts = msg.get("parts") or []
         text = " ".join(p.get("text", "") for p in parts if p.get("kind", "text") == "text").strip()
-        ctx = RequestContext.from_dict(params.get("metadata") or {})
+        metadata = params.get("metadata") or {}
+        ctx = RequestContext.from_dict(metadata)
+        otel_carrier = metadata.get("_otel") or {}  # W3C traceparent injected by the caller
 
         try:
             ctx.require_tenant()
         except ValueError as e:
             return JSONResponse(_rpc_error(rpc_id, -32052, f"Validation error - {e}"))
 
+        # P6: continue the caller's trace so supervisor->investigator->specialist is ONE trace.
         try:
-            result_text = handler(text, ctx)
+            with tracing.continue_trace(otel_carrier):
+                with tracing.span(f"a2a.handle.{name}", context=ctx, kind="a2a_server"):
+                    result_text = handler(text, ctx)
         except Exception as e:  # noqa: BLE001 - surface as JSON-RPC error (HTTP 200)
             return JSONResponse(_rpc_error(rpc_id, -32055, f"Runtime client error - {e}"))
 
@@ -125,6 +131,9 @@ def _is_agentcore_arn(target: str) -> bool:
 def _build_jsonrpc_payload(text: str, context: RequestContext) -> dict[str, Any]:
     """The A2A JSON-RPC `message/send` envelope. Identical on both transports — only the
     transport (raw HTTP vs AgentCore InvokeAgentRuntime) differs."""
+    metadata = context.to_dict()
+    # P6: carry the active W3C trace context so the callee continues the SAME trace.
+    metadata["_otel"] = tracing.inject_trace_context({})
     return {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),
@@ -135,7 +144,7 @@ def _build_jsonrpc_payload(text: str, context: RequestContext) -> dict[str, Any]
                 "parts": [{"kind": "text", "text": text}],
                 "messageId": str(uuid.uuid4()),
             },
-            "metadata": context.to_dict(),
+            "metadata": metadata,
         },
     }
 

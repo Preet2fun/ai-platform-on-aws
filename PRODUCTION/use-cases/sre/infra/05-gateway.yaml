@@ -89,6 +89,33 @@ Resources:
                 Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource: !GetAtt ToolsLambda.Arn
+        # P4 CP3: lets the gateway fetch the ticketing API key from the token vault and inject it
+        # on outbound calls to the ticketing OpenAPI target. Scoped to the one provider + secret.
+        - PolicyName: ticketing-apikey-outbound
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # The AgentCredentialProvider service traverses several resources when fetching the
+              # outbound key (the workload-identity directory + its gateway child, and the token
+              # vault + the apikey provider). Grant both actions across that full set.
+              - Sid: WorkloadIdentityAndVault
+                Effect: Allow
+                Action:
+                  - "bedrock-agentcore:GetWorkloadAccessToken"
+                  - "bedrock-agentcore:GetResourceApiKey"
+                Resource:
+                  - !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default"
+                  - !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/${GatewayName}-*"
+                  - !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default"
+                  - !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default/apikeycredentialprovider/sre-ticketing-apikey"
+              - Sid: GetTicketingSecret
+                Effect: Allow
+                Action: [ "secretsmanager:GetSecretValue" ]
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:bedrock-agentcore-identity!default/apikey/sre-ticketing-apikey-*"
+              - Sid: ReadOpenApiSchema
+                Effect: Allow
+                Action: [ "s3:GetObject" ]
+                Resource: !Sub "arn:aws:s3:::${LambdaCodeS3Bucket}/schemas/*"
       Tags: [ { Key: component, Value: gateway }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
 
   # ---------- The Gateway (MCP, CUSTOM_JWT inbound) ----------
@@ -99,6 +126,7 @@ Resources:
       Description: SRE synthetic observability tools exposed as MCP tools.
       ProtocolType: MCP
       RoleArn: !GetAtt GatewayRole.Arn
+      # ExceptionLevel: DEBUG  # enable only for troubleshooting outbound/target errors in dev
       AuthorizerType: CUSTOM_JWT
       AuthorizerConfiguration:
         CustomJWTAuthorizer:
