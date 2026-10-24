@@ -1,0 +1,107 @@
+{
+  "runs": [
+    {
+      "scenario_id": "rds-connection-exhaustion",
+      "tenant_id": "acme-retail",
+      "root_cause": {
+        "score": 1.0,
+        "identified_true_cause": true,
+        "rationale": "The agent correctly identifies all critical elements of the true root cause: (1) the product-api v2.4.0 deploy at 14:08 as the trigger, (2) the dual mechanism of reduced per-pod connection pool (20\u21928) combined with increased replicas (3\u21929), (3) the new N+1 query path that holds connections longer (~220ms vs <50ms baseline), (4) the aggregate connection math exceeding product-db max_connections=100 (72 from product-api + ~30 from other sources = ~102 total), (5) the resulting connection refusal at the database layer at 14:18, and (6) the cascade to checkout-api 5xx errors. The agent's causal chain matches the ground truth: deploy \u2192 connection pool exhaustion \u2192 database connection saturation \u2192 checkout-api timeouts \u2192 5xx spike. The mechanism is precisely correct (not just symptoms), including the specific timing, the connection arithmetic, and the query performance degradation that exacerbated pool exhaustion. This is a complete and accurate root cause analysis."
+      },
+      "hypotheses": {
+        "per_hypothesis": [
+          {
+            "gt_id": "h1",
+            "expected": "confirm",
+            "agent_status": "confirmed",
+            "correct": true,
+            "statement": "product-db connection pool exhausted (connections hit max_connections), caused by the 14:08 product-api deploy"
+          },
+          {
+            "gt_id": "h2",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "payment-gateway outage is causing checkout failures"
+          },
+          {
+            "gt_id": "h3",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "ElastiCache (cache) eviction storm is the root cause"
+          },
+          {
+            "gt_id": "h4",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "general traffic surge overloaded checkout-api CPU"
+          }
+        ],
+        "confirm_accuracy": 1.0,
+        "red_herring_rejection": 0.0,
+        "overall": 0.25
+      },
+      "remediation": {
+        "score": 0.95,
+        "rationale": "The agent's remediation is highly aligned with ground truth and demonstrates comprehensive incident response. IMMEDIATE actions correctly prioritize rollback of product-api v2.4.0 to eliminate the N+1 query (root cause) and appropriately suggest raising max_connections as a stopgap measure, matching ground truth guidance. The agent correctly identifies the connection math (72 base + overhead) and provides specific thresholds (150+). SHORT-TERM actions address the N+1 fix and connection pool right-sizing (either increase per-pod pool OR reduce replicas), which aligns with ground truth's alternative approaches. The monitoring additions are sound preventive measures. LONG-TERM recommendations add valuable defense-in-depth (capacity planning, pipeline checks, PgBouncer consideration) without introducing harmful steps. Minor deduction (0.05) because the agent could have been slightly more emphatic that max_connections increase is purely a stopgap and the N+1 fix is the true priority, though this is implicit in the ordering. Overall, the remediation is safe, addresses root cause, provides appropriate alternatives, and adds valuable preventive layers."
+      },
+      "confidence": "high",
+      "confidence_calibrated": true,
+      "agent_confirmed_hypothesis_id": "h1",
+      "_agent_result": {
+        "conclusion": {
+          "root_cause": "Product-api v2.4.0 deployment at 14:08:00Z introduced a dual-failure condition: (1) N+1 query pattern in the new availability join path executing per-item SELECT with LEFT JOIN averaging 220ms (vs baseline <50ms), holding database connections 4x longer and exhausting the reduced per-pod connection pool (20\u21928), and (2) miscalculated connection pool sizing that failed to account for product-db max_connections=100 hard limit. The replica scale-up from 3\u21929 pods created 72 base connections (9\u00d78), which combined with checkout-api (~15), other services (~10), and maintenance connections (~5) totaled 102 connections, exceeding the database's 100-connection ceiling at 14:18Z. The inefficient N+1 queries saturated the smaller pools faster than connection cycling could recover, while the database connection limit created a hard ceiling that prevented any pod from acquiring additional connections, cascading 503 errors to checkout-api and triggering 5xx spike from 0.4% to 14.2%.",
+          "confirmed_hypothesis_id": "h1",
+          "timeline": [
+            "14:08:00Z - Product-api v2.4.0 deployed with new availability join path (N+1 queries), reduced pool size (20\u21928 per pod), and replica scale-up (3\u21929 pods)",
+            "14:08:10Z - K8s ScalingReplicaSet event: all 9 product-api pods initialized within 30 seconds, establishing 72 base database connections (9\u00d78)",
+            "14:08:40Z - Product-db active_connections climbed from 41 to 63 as new pods established connection pools",
+            "14:10:00Z - Connection pool wait time escalated from 3ms to 120ms; checkout-api 5xx rate began rising from 0.4%",
+            "14:12:00Z - Slow query warning logged: 'SELECT * FROM products p LEFT JOIN inventory i ... executed per-item (N+1), 220ms avg' in availability path",
+            "14:14:00Z - Product-db active_connections reached 88, approaching max_connections=100 limit",
+            "14:17:40Z - Product-api error: 'pool exhausted, size=8, pending=37' with 5000ms timeout",
+            "14:18:00Z - Product-db active_connections saturated at exactly 100 (max_connections limit); 'too many clients already' errors began",
+            "14:18:05Z - Product-db logged 'FATAL: too many clients already' error",
+            "14:19:00Z - Checkout-api 5xx rate spiked to 4.8% as product-api 503 errors propagated upstream",
+            "14:20:12Z - Checkout-api error: 'upstream product-api returned 503' due to connection acquisition timeout",
+            "14:21:30Z - Checkout-api marked Unhealthy by K8s health checks",
+            "14:22:11Z - Additional 'too many clients already' error logged in product-db",
+            "14:25:00Z - Connection pool wait time peaked at 5000ms; pool exhaustion fully cascaded",
+            "14:28:00Z - Checkout-api 5xx rate reached 14.2% peak"
+          ],
+          "remediation": "IMMEDIATE: (1) Rollback product-api to v2.3.x to eliminate N+1 query pattern and restore baseline connection hold times (<50ms). (2) Increase product-db max_connections from 100 to 150+ to provide headroom for current topology (72 base + 30 overhead). SHORT-TERM: (3) Optimize availability join path in v2.4.0 to use batch queries instead of per-item SELECT (eliminate N+1 pattern). (4) Right-size product-api connection pool: either increase per-pod pool from 8 to 12-15 OR reduce replicas from 9 to 6 to stay within database connection budget. (5) Implement connection pool monitoring alerts: trigger at >80% pool utilization or wait time >100ms. LONG-TERM: (6) Establish capacity planning process that validates total connection count (pods \u00d7 pool size + overhead) against database max_connections before any deployment. (7) Add database connection budget tracking to deployment pipelines. (8) Consider read replicas or connection pooling proxy (PgBouncer) to decouple application connection pools from database connection limits.",
+          "confidence": "high"
+        },
+        "hypotheses": [
+          {
+            "id": "h1",
+            "status": "confirmed",
+            "statement": "Product-api v2.4.0 introduced an N+1 query pattern in the new availability join path that holds connections significantly longer (>200ms vs baseline <50ms), exh"
+          },
+          {
+            "id": "h2",
+            "status": "confirmed",
+            "statement": "Product-db max_connections limit (likely 100) is insufficient for new topology: 9 product-api pods \u00d7 8 pool = 72 base connections, plus checkout-api (~15), othe"
+          },
+          {
+            "id": "h3",
+            "status": "rejected",
+            "statement": "Product-api v2.4.0 has a connection leak in the new availability join path: connections are acquired but not properly released in error/timeout paths (missing ."
+          },
+          {
+            "id": "h4",
+            "status": "rejected",
+            "statement": "RED HERRING: Checkout-api v1.9.2 deploy (20 hours prior, 2026-02-09T18:00Z) introduced a subtle regression where the 'copy change on confirmation page' actually"
+          },
+          {
+            "id": "h5",
+            "status": "rejected",
+            "statement": "The replica scale-up from 3\u21929 pods triggered a thundering herd during product-api initialization at 14:08Z: all 9 pods simultaneously attempted to establish con"
+          }
+        ]
+      }
+    }
+  ]
+}

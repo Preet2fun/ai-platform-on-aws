@@ -193,8 +193,12 @@ simple one-off questions. [3]
 - [ ] Consolidation/extraction patterns monitored
 
 ## 6. Artifacts
-- `examples/memory-strategy-config.md` — generic strategy config (create/retrieve APIs).
-- `examples/namespace-conventions.md` — namespace design patterns.
+- `multi-tenant-memory-design.html` — in-depth, production-grade design doc for multi-tenant
+  shared-namespace memory (composite `actorId`, single shared ABAC IAM policy, per-agent trust
+  policies, STS session tags, trusted IdP, 6-pillar analysis, reference + flow diagrams).
+- `multi-tenant-memory-implementation.html` — step-by-step production implementation walkthrough
+  on a worked 3-tenant / 2-agent example (create-memory, policy, roles, Cognito pre-token Lambda,
+  scoped client, caching, isolation tests, troubleshooting).
 - `reference/SOURCES.md` — source blogs + key facts.
 
 ---

@@ -73,23 +73,18 @@ def span(name: str, *, context=None, kind: str = "internal", attrs: dict[str, An
     if _tracer is None:
         yield None
         return
-    with _tracer.start_as_current_span(name) as sp:
+    # record_exception=True / set_status_on_exception=True let OTel handle error recording itself,
+    # so we must NOT also try/except+reraise around the yield (that double-handling triggers
+    # "generator didn't stop after throw()"). Just yield; OTel marks the span on exception.
+    with _tracer.start_as_current_span(
+        name, record_exception=True, set_status_on_exception=True
+    ) as sp:
         _set(sp, "sre.step_kind", kind)
         for k, v in (ctx_attrs(context)).items():
             _set(sp, k, v)
         for k, v in (attrs or {}).items():
             _set(sp, k, v)
-        try:
-            yield sp
-        except Exception as e:  # noqa: BLE001 - record then re-raise so the span shows the error
-            if sp is not None:
-                try:
-                    sp.record_exception(e)
-                    from opentelemetry.trace import Status, StatusCode
-                    sp.set_status(Status(StatusCode.ERROR, str(e)))
-                except Exception:  # noqa: BLE001
-                    pass
-            raise
+        yield sp
 
 
 def record_llm(sp, *, model: str, system: str, user: str, output: str,

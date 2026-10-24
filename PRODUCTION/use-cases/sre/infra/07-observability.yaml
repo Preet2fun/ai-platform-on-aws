@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  SRE Agentic System - P6 Observability ops layer: log retention (closes the unbounded-retention
+  gap), an SNS alert topic, CloudWatch alarms (runtime errors + throttles), and a dashboard. Rich
+  distributed tracing (spans with LLM prompts + tool I/O) is enabled on the runtimes themselves via
+  ADOT + AGENT_OBSERVABILITY_ENABLED; this stack is the monitoring/alerting/retention around it.
+
+Parameters:
+  ProjectName: { Type: String, Default: sre-agentic }
+  EnvName:     { Type: String, Default: dev }
+  RetentionDays:
+    Type: Number
+    Default: 30
+    Description: Retention for agent/gateway/lambda log groups (closes unbounded-retention gap).
+  AlarmEmail:
+    Type: String
+    Default: ""
+    Description: Optional email for SNS alarm notifications. Empty = topic only, no subscription.
+
+Conditions:
+  HasEmail: !Not [ !Equals [ !Ref AlarmEmail, "" ] ]
+
+Resources:
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${ProjectName}-${EnvName}-alerts"
+      Tags: [ { Key: component, Value: observability }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
+
+  AlertEmailSub:
+    Type: AWS::SNS::Subscription
+    Condition: HasEmail
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  # NOTE: log-group RETENTION is set via CLI (put-retention-policy) in the deploy step, because the
+  # runtime/lambda log groups are created by AgentCore/Lambda — declaring them here would fail with
+  # "already exists". This stack owns the SNS topic, alarms, and dashboard.
+
+  # ---- Alarms on the tools Lambda (real, reliably-populated metrics) ----
+  ToolsLambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-${EnvName}-tools-lambda-errors"
+      AlarmDescription: Tool backend (Lambda) errors — evidence gathering is failing.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [ { Name: FunctionName, Value: !Sub "${ProjectName}-${EnvName}-tools" } ]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [ !Ref AlertTopic ]
+
+  ToolsLambdaThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-${EnvName}-tools-lambda-throttles"
+      AlarmDescription: Tool backend (Lambda) throttling.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Dimensions: [ { Name: FunctionName, Value: !Sub "${ProjectName}-${EnvName}-tools" } ]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [ !Ref AlertTopic ]
+
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "${ProjectName}-${EnvName}-sre"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            { "type": "text", "x": 0, "y": 0, "width": 24, "height": 2,
+              "properties": { "markdown": "# SRE Agentic Platform - ${EnvName}\nRuntime health, tool backend, and model usage. Distributed traces (with LLM prompts + tool I/O) are in CloudWatch GenAI Observability / Transaction Search." } },
+            { "type": "metric", "x": 0, "y": 2, "width": 12, "height": 6,
+              "properties": { "title": "Tools Lambda - Invocations & Errors", "region": "${AWS::Region}", "stat": "Sum", "period": 300,
+                "metrics": [
+                  [ "AWS/Lambda", "Invocations", "FunctionName", "${ProjectName}-${EnvName}-tools" ],
+                  [ "AWS/Lambda", "Errors", "FunctionName", "${ProjectName}-${EnvName}-tools" ] ] } },
+            { "type": "metric", "x": 12, "y": 2, "width": 12, "height": 6,
+              "properties": { "title": "Tools Lambda - Duration (ms)", "region": "${AWS::Region}", "stat": "Average", "period": 300,
+                "metrics": [
+                  [ "AWS/Lambda", "Duration", "FunctionName", "${ProjectName}-${EnvName}-tools", { "stat": "p50" } ],
+                  [ "AWS/Lambda", "Duration", "FunctionName", "${ProjectName}-${EnvName}-tools", { "stat": "p99" } ] ] } },
+            { "type": "metric", "x": 0, "y": 8, "width": 24, "height": 6,
+              "properties": { "title": "Bedrock (Claude) - Invocations & Latency", "region": "${AWS::Region}", "stat": "Sum", "period": 300,
+                "metrics": [
+                  [ "AWS/Bedrock", "Invocations" ],
+                  [ "AWS/Bedrock", "InvocationLatency", { "stat": "Average" } ],
+                  [ "AWS/Bedrock", "InputTokenCount" ],
+                  [ "AWS/Bedrock", "OutputTokenCount" ] ] } },
+            { "type": "log", "x": 0, "y": 14, "width": 24, "height": 6,
+              "properties": { "title": "Investigator - recent errors", "region": "${AWS::Region}",
+                "query": "SOURCE '/aws/bedrock-agentcore/runtimes/sre_agentic_dev_investigator-31IK8f71Bt-DEFAULT' | fields @timestamp, @message | filter @message like /ERROR|Exception|Traceback/ | sort @timestamp desc | limit 20" } }
+          ]
+        }
+
+Outputs:
+  AlertTopicArn:
+    Value: !Ref AlertTopic
+  DashboardName:
+    Value: !Sub "${ProjectName}-${EnvName}-sre"

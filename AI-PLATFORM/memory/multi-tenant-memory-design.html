@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Tenant Agent Memory — Design Document</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --ink:#e6edf3; --muted:#9aa7b4;
+    --line:#30363d; --accent:#2f81f7; --accent2:#3fb950; --warn:#d29922; --danger:#f85149;
+    --purple:#a371f7; --teal:#39c5bb; --orange:#ff9500; --code:#0b0f14;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.6;font-size:16px}
+  .wrap{max-width:1080px;margin:0 auto;padding:48px 28px 96px}
+  header.hero{border:1px solid var(--line);border-radius:16px;padding:34px 34px 28px;
+    background:linear-gradient(135deg,#161b22,#0d1117);margin-bottom:34px}
+  .eyebrow{color:var(--accent);font-weight:700;letter-spacing:.14em;text-transform:uppercase;font-size:12px}
+  h1{font-size:34px;line-height:1.2;margin:10px 0 8px}
+  h2{font-size:25px;margin:48px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:19px;margin:30px 0 10px;color:#cdd9e5}
+  h4{font-size:15px;margin:20px 0 6px;color:var(--teal);text-transform:uppercase;letter-spacing:.05em}
+  p{color:var(--ink)} .muted{color:var(--muted)}
+  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+  code{background:var(--code);border:1px solid var(--line);border-radius:5px;padding:1px 6px;
+    font-family:"SF Mono",Menlo,Consolas,monospace;font-size:13.5px;color:#a5d6ff}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:10px;padding:16px 18px;
+    overflow:auto;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:13px;line-height:1.55}
+  pre code{background:none;border:none;padding:0;color:#c9d1d9}
+  .tag{color:#7ee787} .str{color:#a5d6ff} .kw{color:#ff7b72} .com{color:#8b949e} .num{color:#79c0ff}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14.5px}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#cdd9e5}
+  tr:nth-child(even) td{background:#12161d}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:16px 0}
+  .grid{display:grid;gap:16px}
+  .grid-2{grid-template-columns:1fr 1fr}
+  .grid-3{grid-template-columns:1fr 1fr 1fr}
+  @media(max-width:860px){.grid-2,.grid-3{grid-template-columns:1fr}}
+  .pill{display:inline-block;font-size:11.5px;font-weight:700;padding:3px 10px;border-radius:999px;
+    border:1px solid var(--line);margin:2px 4px 2px 0}
+  .pill.sec{color:#ff9a9a;border-color:#58252a;background:#2a1416}
+  .pill.rel{color:#8fd3ff;border-color:#1b3a52;background:#0f2434}
+  .pill.ops{color:#ffd79a;border-color:#5a4316;background:#2a2010}
+  .pill.perf{color:#b7f7c0;border-color:#1f4d2a;background:#0f2816}
+  .pill.cost{color:#d8c0ff;border-color:#3d2d5c;background:#1c1430}
+  .pill.sus{color:#a6f0d0;border-color:#1f4d3e;background:#0f281f}
+  .note{border-left:4px solid var(--accent);background:#0f1b2d;padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .warnbox{border-left:4px solid var(--warn);background:#241c0c;padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .danger{border-left:4px solid var(--danger);background:#2a1416;padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .ok{border-left:4px solid var(--accent2);background:#0f2416;padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  ul,ol{padding-left:22px} li{margin:5px 0}
+  .toc{columns:2;column-gap:28px} .toc a{display:block;padding:3px 0;font-size:14.5px}
+  @media(max-width:700px){.toc{columns:1}}
+  figure{margin:24px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;overflow:auto}
+  figcaption{color:var(--muted);font-size:13px;text-align:center;margin-top:10px}
+  .kbd{font-family:"SF Mono",monospace;background:#0b0f14;border:1px solid var(--line);
+    border-radius:4px;padding:1px 6px;font-size:12.5px;color:var(--purple)}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-top:8px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .sw{width:14px;height:14px;border-radius:3px;display:inline-block}
+  .foot{margin-top:60px;border-top:1px solid var(--line);padding-top:20px;color:var(--muted);font-size:13px}
+  .num-badge{display:inline-flex;width:22px;height:22px;border-radius:50%;background:var(--accent);
+    color:#fff;font-size:12px;font-weight:700;align-items:center;justify-content:center;margin-right:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">AI-PLATFORM · Memory Component · Design Standard</div>
+  <h1>Multi-Tenant Agent Memory Architecture</h1>
+  <p class="muted">A production-grade design for securely sharing a single Amazon Bedrock AgentCore
+  Memory namespace across many tenants, agents, and users — using Attribute-Based Access Control
+  (ABAC) and a single IAM policy instead of one policy per tenant.</p>
+  <div style="margin-top:14px">
+    <span class="pill sec">Security</span>
+    <span class="pill rel">Reliability</span>
+    <span class="pill ops">Operational Excellence</span>
+    <span class="pill perf">Performance</span>
+    <span class="pill cost">Cost</span>
+    <span class="pill sus">Sustainability</span>
+  </div>
+</header>
+
+<div class="card">
+  <strong>Contents</strong>
+  <div class="toc" style="margin-top:10px">
+    <a href="#problem">1. Problem &amp; motivation</a>
+    <a href="#model">2. Isolation model</a>
+    <a href="#actorid">3. Composite actorId &amp; namespaces</a>
+    <a href="#arch">4. Reference architecture</a>
+    <a href="#flow">5. End-to-end auth &amp; access flow</a>
+    <a href="#iam">6. IAM policy design (ABAC)</a>
+    <a href="#trust">7. Per-agent roles &amp; trust policies</a>
+    <a href="#idp">8. Identity provider as trusted source</a>
+    <a href="#perf">9. Performance, caching &amp; resilience</a>
+    <a href="#pillars">10. Six Well-Architected pillars</a>
+    <a href="#checklist">11. Design checklist</a>
+    <a href="#tradeoffs">12. Trade-offs &amp; alternatives</a>
+  </div>
+</div>
+
+<!-- ============ 1 ============ -->
+<h2 id="problem">1. Problem &amp; motivation</h2>
+<p>AgentCore Memory gives agents short-term working memory and long-term, cross-session memory.
+In a multi-tenant SaaS product, many customers (tenants), several agents, and many end users all
+share the platform. The naive approach — a <strong>dedicated namespace and a dedicated IAM policy
+per tenant-agent combination</strong> — is secure but does not scale: policy count and onboarding
+time grow linearly with the customer base, turning minutes of onboarding into hours and inflating
+operational cost by orders of magnitude.</p>
+
+<div class="note">
+<strong>Design goal.</strong> Keep the same IAM-backed isolation guarantees as dedicated namespaces,
+while using <em>one shared namespace and one shared IAM policy</em> whose cost stays constant as
+tenants scale from 10 → 100 → 1,000. Reference:
+<a href="https://builder.aws.com/content/3C1SCSoe15VaBnmsiMIfGcZfhxM/secure-shared-multi-tenant-agent-memory-namespaces-using-agentcore-memory">Secure shared multi-tenant agent memory namespaces using AgentCore Memory</a> (AWS Builder Center).
+</div>
+
+<!-- ============ 2 ============ -->
+<h2 id="model">2. Isolation model — three dimensions, defense in depth</h2>
+<p>A shared namespace still requires hard isolation so one tenant's memories never leak to another.
+The design enforces three independent dimensions. Taking two example agents (a travel agent and a
+shopping agent) serving many tenants:</p>
+
+<div class="grid grid-3">
+  <div class="card">
+    <h4 style="color:var(--purple)">Tenant isolation</h4>
+    <p class="muted" style="margin:0">Tenant A's data is never visible to Tenant B. Boundary key:
+    <code>tenantId</code>.</p>
+  </div>
+  <div class="card">
+    <h4 style="color:var(--teal)">Agent isolation</h4>
+    <p class="muted" style="margin:0">The shopping agent cannot read memories written by the travel
+    agent — even for the same tenant. Boundary key: <code>agentId</code>.</p>
+  </div>
+  <div class="card">
+    <h4 style="color:var(--orange)">User isolation</h4>
+    <p class="muted" style="margin:0">User&nbsp;1's memories stay separate from User&nbsp;2's within a
+    tenant, for privacy/regulatory compliance. Boundary key: <code>userId</code>.</p>
+  </div>
+</div>
+
+<div class="ok"><strong>Defense in depth.</strong> Application code <em>can</em> enforce these
+boundaries, but enforcing them in IAM means AWS rejects an unauthorized request <em>before it ever
+reaches your code</em>. The IAM layer is the authoritative control; app-level checks are a second
+line.</div>
+
+<!-- ============ 3 ============ -->
+<h2 id="actorid">3. Composite actorId &amp; namespace layout</h2>
+<p>AgentCore Memory organizes long-term memory under a customizable namespace path that can reference
+pre-defined variables — <code>actorId</code>, <code>memoryStrategyId</code>, and
+<code>sessionId</code> — which are also usable as IAM policy condition keys. The key design move is to
+make <code>actorId</code> a <strong>composite of the three isolation dimensions</strong>:</p>
+
+<pre><code>actorId   = "{tenantId}:{agentId}:{userId}"
+
+<span class="com"># when tenant-beta's user f36458b2 uses the travel agent:</span>
+actorId   = "tenant-beta:travel-agent:f36458b2"
+namespace = "/tenant-beta:travel-agent:f36458b2/my_memory/"</code></pre>
+
+<p>Because the isolation attributes are embedded in both the <code>actorId</code> (used for events)
+and the <code>namespace</code> (used for retrieval), a single IAM policy can gate every dimension
+with ABAC condition keys sourced from session tags.</p>
+
+<table>
+<thead><tr><th>Memory action group</th><th>Actions</th><th>IAM condition key</th></tr></thead>
+<tbody>
+<tr><td>Write / read events (STM)</td>
+    <td><code>CreateEvent</code>, <code>GetEvent</code>, <code>ListEvents</code>, <code>DeleteEvent</code></td>
+    <td><code>bedrock-agentcore:actorId</code></td></tr>
+<tr><td>Retrieve long-term records (LTM)</td>
+    <td><code>RetrieveMemoryRecords</code>, <code>ListMemoryRecords</code></td>
+    <td><code>bedrock-agentcore:namespace</code></td></tr>
+</tbody>
+</table>
+<p class="muted">The two groups support different condition keys, so the policy needs two separate
+statements (see §6).</p>
+
+<!-- ============ 4 ============ -->
+<h2 id="arch">4. Reference architecture</h2>
+<p>The seven-step design mirrors the AWS reference. The identity provider is the <em>trusted source</em>
+of tenant context; STS mints short-lived, attribute-scoped credentials; AgentCore Memory enforces the
+namespace boundary.</p>
+
+<figure>
+<svg viewBox="0 0 1000 560" width="100%" role="img" aria-label="Multi-tenant memory reference architecture">
+  <defs>
+    <marker id="ar" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#9aa7b4"/>
+    </marker>
+    <style>
+      .b{fill:#1c2330;stroke:#30363d;rx:10}
+      .t{fill:#e6edf3;font:13px -apple-system,Segoe UI,sans-serif}
+      .tb{fill:#e6edf3;font:bold 13px -apple-system,Segoe UI,sans-serif}
+      .tm{fill:#9aa7b4;font:11px "SF Mono",monospace}
+      .ln{stroke:#9aa7b4;stroke-width:1.6;fill:none;marker-end:url(#ar)}
+      .n{fill:#2f81f7;font:bold 11px sans-serif}
+    </style>
+  </defs>
+
+  <!-- user -->
+  <circle cx="80" cy="300" r="26" fill="#161b22" stroke="#a371f7" stroke-width="2"/>
+  <text x="80" y="305" text-anchor="middle" class="t">User</text>
+  <!-- cognito -->
+  <rect class="b" x="150" y="60" width="150" height="60" rx="10"/>
+  <text x="225" y="86" text-anchor="middle" class="tb">Amazon Cognito</text>
+  <text x="225" y="104" text-anchor="middle" class="tm">(identity provider)</text>
+  <!-- pretoken lambda -->
+  <rect class="b" x="150" y="150" width="150" height="56" rx="10"/>
+  <text x="225" y="173" text-anchor="middle" class="tb">Pre-token Lambda</text>
+  <text x="225" y="190" text-anchor="middle" class="tm">inject tenantId claim</text>
+  <!-- runtime -->
+  <rect class="b" x="430" y="250" width="230" height="110" rx="10" stroke="#39c5bb"/>
+  <text x="545" y="276" text-anchor="middle" class="tb">AgentCore Runtime</text>
+  <rect x="450" y="290" width="190" height="56" rx="6" fill="#0b0f14" stroke="#30363d"/>
+  <text x="458" y="308" class="tm">AGENT_ID = "travel-agent"</text>
+  <text x="458" y="324" class="tm">ROLE_ARN = per-agent role</text>
+  <text x="458" y="340" class="tm">MEMORY_STRATEGY_ID</text>
+  <!-- STS -->
+  <rect class="b" x="430" y="110" width="150" height="56" rx="10" stroke="#d29922"/>
+  <text x="505" y="133" text-anchor="middle" class="tb">AWS STS</text>
+  <text x="505" y="150" text-anchor="middle" class="tm">AssumeRole + tags</text>
+  <!-- per-agent role + shared policy -->
+  <rect class="b" x="640" y="40" width="150" height="56" rx="10"/>
+  <text x="715" y="63" text-anchor="middle" class="tb">Per-agent role</text>
+  <text x="715" y="80" text-anchor="middle" class="tm">trust: agentId pinned</text>
+  <rect class="b" x="820" y="40" width="150" height="56" rx="10"/>
+  <text x="895" y="63" text-anchor="middle" class="tb">Shared IAM policy</text>
+  <text x="895" y="80" text-anchor="middle" class="tm">ABAC, one policy</text>
+  <!-- memory -->
+  <rect class="b" x="430" y="440" width="300" height="90" rx="10" stroke="#39c5bb"/>
+  <text x="580" y="466" text-anchor="middle" class="tb">AgentCore Memory</text>
+  <rect x="450" y="480" width="260" height="36" rx="6" fill="#0b0f14" stroke="#30363d"/>
+  <text x="460" y="503" class="tm">/{actorId}/{memoryStrategyId}/  namespace</text>
+
+  <!-- lines -->
+  <path class="ln" d="M106,290 C130,230 130,130 150,96"/>
+  <text x="112" y="200" class="n">1 authenticate</text>
+  <path class="ln" d="M225,120 L225,150"/>
+  <text x="232" y="140" class="n">2 pre-token</text>
+  <path class="ln" d="M300,180 C360,200 380,250 430,280"/>
+  <text x="330" y="235" class="n">3 token</text>
+  <path class="ln" d="M545,250 L525,166"/>
+  <text x="430" y="215" class="n">4 extract claims</text>
+  <path class="ln" d="M580,138 L640,80"/>
+  <text x="590" y="120" class="n">5 assumeRole(tags)</text>
+  <path class="ln" d="M505,166 C505,200 530,220 545,250"/>
+  <text x="508" y="205" class="n">6 scoped creds</text>
+  <path class="ln" d="M545,360 L560,440"/>
+  <text x="560" y="410" class="n">7 retrieve / store</text>
+  <path class="ln" d="M790,68 L820,68"/>
+  <path class="ln" d="M715,96 C715,160 640,180 660,250" stroke-dasharray="4 3"/>
+</svg>
+<figcaption>Reference architecture — Cognito &amp; pre-token Lambda supply trusted tenant context (1–4);
+the runtime assumes a per-agent role passing isolation attributes as STS session tags (5–6); the
+scoped credentials access only the user's namespace in AgentCore Memory (7).</figcaption>
+</figure>
+
+<!-- ============ 5 ============ -->
+<h2 id="flow">5. End-to-end authentication &amp; access flow</h2>
+<figure>
+<svg viewBox="0 0 980 430" width="100%" role="img" aria-label="Sequence flow">
+  <defs>
+    <marker id="ar2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#2f81f7"/></marker>
+    <style>
+      .lane{fill:#9aa7b4;font:bold 12px sans-serif}
+      .life{stroke:#30363d;stroke-width:1.4}
+      .msg{stroke:#2f81f7;stroke-width:1.5;fill:none;marker-end:url(#ar2)}
+      .lab{fill:#e6edf3;font:11.5px "SF Mono",monospace}
+    </style>
+  </defs>
+  <!-- lanes -->
+  <g>
+    <text class="lane" x="70"  y="26" text-anchor="middle">User</text>
+    <text class="lane" x="270" y="26" text-anchor="middle">Cognito+Lambda</text>
+    <text class="lane" x="500" y="26" text-anchor="middle">Agent Runtime</text>
+    <text class="lane" x="720" y="26" text-anchor="middle">AWS STS</text>
+    <text class="lane" x="910" y="26" text-anchor="middle">AgentCore Memory</text>
+  </g>
+  <line class="life" x1="70"  y1="36" x2="70"  y2="410"/>
+  <line class="life" x1="270" y1="36" x2="270" y2="410"/>
+  <line class="life" x1="500" y1="36" x2="500" y2="410"/>
+  <line class="life" x1="720" y1="36" x2="720" y2="410"/>
+  <line class="life" x1="910" y1="36" x2="910" y2="410"/>
+
+  <path class="msg" d="M70,70 L270,70"/><text class="lab" x="90" y="64">1. authenticate()</text>
+  <path class="msg" d="M270,110 L270,110"/><text class="lab" x="150" y="104">2. pre-token injects tenantId</text>
+  <path class="msg" d="M270,150 L70,150"/><text class="lab" x="100" y="144">access token (tenantId, sub)</text>
+  <path class="msg" d="M70,190 L500,190"/><text class="lab" x="120" y="184">3. invoke agent (token)</text>
+  <text class="lab" x="420" y="224">4. tenantId=claims.tenantId, userId=sub</text>
+  <path class="msg" d="M500,260 L720,260"/><text class="lab" x="520" y="254">5. AssumeRole(role, tags:{tenant,agent,user})</text>
+  <path class="msg" d="M720,300 L500,300"/><text class="lab" x="520" y="294">6. temp creds scoped to actorId</text>
+  <path class="msg" d="M500,340 L910,340"/><text class="lab" x="560" y="334">7. retrieve/create under /actorId/ ns</text>
+  <path class="msg" d="M910,380 L500,380"/><text class="lab" x="560" y="374">records (isolated) — or AccessDenied</text>
+</svg>
+<figcaption>IAM evaluates the ABAC conditions on step 7: a request whose session tags don't match the
+requested namespace is denied before any application logic runs.</figcaption>
+</figure>
+
+<ol>
+  <li><span class="num-badge">1</span>User authenticates against Amazon Cognito (the identity provider).</li>
+  <li><span class="num-badge">2</span>Cognito calls a <strong>pre-token-generation Lambda</strong> that adds the <code>tenantId</code> claim to the access token.</li>
+  <li><span class="num-badge">3</span>User invokes the agent runtime, passing the token as proof of authentication.</li>
+  <li><span class="num-badge">4</span>The agent extracts <code>tenantId</code> from the claim and <code>userId</code> from <code>sub</code> (Cognito's immutable user id).</li>
+  <li><span class="num-badge">5</span>The agent calls STS <code>AssumeRole</code> on a <strong>per-agent role</strong>, passing <code>tenantId</code>, <code>agentId</code>, <code>userId</code> as session tags. <code>agentId</code> is pinned by the role's trust policy; tenant/user arrive as tags.</li>
+  <li><span class="num-badge">6</span>The returned temporary credentials are scoped: the composite <code>actorId</code> resolves to this user's namespace key.</li>
+  <li><span class="num-badge">7</span>The agent reads/writes memory with the scoped credentials; IAM enforces the namespace boundary.</li>
+</ol>
+
+<!-- ============ 6 ============ -->
+<h2 id="iam">6. IAM policy design (one shared ABAC policy)</h2>
+<p>Instead of per-tenant policies, a single policy uses ABAC condition keys driven by
+<span class="kbd">aws:PrincipalTag</span> values. Two statements are required because event actions and
+retrieval actions expose different condition keys.</p>
+
+<pre><code>{
+  <span class="tag">"Version"</span>: <span class="str">"2012-10-17"</span>,
+  <span class="tag">"Statement"</span>: [
+    {
+      <span class="com">// event actions keyed on composite actorId</span>
+      <span class="tag">"Effect"</span>: <span class="str">"Allow"</span>,
+      <span class="tag">"Action"</span>: [
+        <span class="str">"bedrock-agentcore:CreateEvent"</span>,
+        <span class="str">"bedrock-agentcore:GetEvent"</span>,
+        <span class="str">"bedrock-agentcore:ListEvents"</span>,
+        <span class="str">"bedrock-agentcore:DeleteEvent"</span>
+      ],
+      <span class="tag">"Resource"</span>: <span class="str">"arn:aws:bedrock-agentcore:&lt;region&gt;:&lt;account&gt;:memory/my_memory"</span>,
+      <span class="tag">"Condition"</span>: { <span class="tag">"StringLike"</span>: {
+        <span class="tag">"bedrock-agentcore:actorId"</span>:
+          <span class="str">"${aws:PrincipalTag/tenantId}:${aws:PrincipalTag/agentId}:${aws:PrincipalTag/userId}"</span>
+      }}
+    },
+    {
+      <span class="com">// retrieval actions keyed on namespace prefix</span>
+      <span class="tag">"Effect"</span>: <span class="str">"Allow"</span>,
+      <span class="tag">"Action"</span>: [
+        <span class="str">"bedrock-agentcore:RetrieveMemoryRecords"</span>,
+        <span class="str">"bedrock-agentcore:ListMemoryRecords"</span>
+      ],
+      <span class="tag">"Resource"</span>: <span class="str">"arn:aws:bedrock-agentcore:&lt;region&gt;:&lt;account&gt;:memory/my_memory"</span>,
+      <span class="tag">"Condition"</span>: { <span class="tag">"StringLike"</span>: {
+        <span class="tag">"bedrock-agentcore:namespace"</span>:
+          <span class="str">"/${aws:PrincipalTag/tenantId}:${aws:PrincipalTag/agentId}:${aws:PrincipalTag/userId}/*"</span>
+      }}
+    }
+  ]
+}</code></pre>
+
+<div class="note">The same policy is attached to the per-agent role of <em>every</em> agent that needs
+the namespace. Adding a tenant adds no policy; onboarding becomes constant-cost.</div>
+
+<!-- ============ 7 ============ -->
+<h2 id="trust">7. Per-agent roles &amp; trust policies</h2>
+<p>Each agent gets its own role carrying the shared namespace policy. The role's <strong>trust policy</strong>
+delivers agent isolation: it allows only the agent's execution role to assume it, requires the expected
+session tags, and <em>pins</em> <code>AgentId</code> with <code>StringEquals</code> so one agent can never
+assume another's role — even if they share an execution role.</p>
+
+<pre><code>{
+  <span class="tag">"Version"</span>: <span class="str">"2012-10-17"</span>,
+  <span class="tag">"Statement"</span>: [{
+    <span class="tag">"Effect"</span>: <span class="str">"Allow"</span>,
+    <span class="tag">"Principal"</span>: { <span class="tag">"AWS"</span>: <span class="str">"arn:aws:iam::&lt;account&gt;:role/MyAgentExecutionRole"</span> },
+    <span class="tag">"Action"</span>: [ <span class="str">"sts:AssumeRole"</span>, <span class="str">"sts:TagSession"</span> ],
+    <span class="tag">"Condition"</span>: {
+      <span class="tag">"StringEquals"</span>: { <span class="tag">"aws:RequestTag/AgentId"</span>: <span class="str">"shopping-agent"</span> },
+      <span class="tag">"StringLike"</span>:   { <span class="tag">"aws:RequestTag/TenantId"</span>: <span class="str">"?*"</span>,
+                           <span class="tag">"aws:RequestTag/UserId"</span>: <span class="str">"?*"</span> }
+    }
+  }]
+}</code></pre>
+
+<div class="grid grid-2">
+  <div class="card"><h4>Execution role vs namespace role</h4>
+  <p class="muted" style="margin:0">The agent runs under a least-privilege <em>execution role</em>. The
+  <em>namespace role</em> (with the ABAC policy) is separate and assumed at runtime — the execution role
+  never holds broad memory access.</p></div>
+  <div class="card"><h4>Why pin agentId in trust</h4>
+  <p class="muted" style="margin:0">If <code>agentId</code> is supplied as an env var at deploy and is
+  changed accidentally, the trust policy's <code>StringEquals</code> blocks the assume — impersonation
+  is structurally prevented, not merely discouraged.</p></div>
+</div>
+
+<!-- ============ 8 ============ -->
+<h2 id="idp">8. Identity provider as the trusted source</h2>
+<p>Because isolation attributes drive IAM decisions, their source at runtime <strong>must be trusted</strong>
+— owned infrastructure-as-code or a validated auth token. You must own the IdP to control custom
+attributes such as <code>tenantId</code>.</p>
+<ul>
+  <li><strong><code>userId</code> ← <code>sub</code>.</strong> Cognito (and most IdPs) use <code>sub</code>
+  as an immutable unique user id — a durable substitute for <code>userId</code> that never changes in a
+  user's lifetime.</li>
+  <li><strong><code>tenantId</code> via pre-token generation.</strong> Custom attributes aren't in access
+  tokens by default; a Cognito pre-token-generation Lambda copies <code>custom:tenantId</code> into the
+  token claims so the runtime can read it.</li>
+</ul>
+<pre><code><span class="kw">export const</span> handler = <span class="kw">async</span> (event) => {
+  <span class="kw">const</span> tenantId = event.request.userAttributes[<span class="str">'custom:tenantId'</span>];
+  <span class="kw">if</span> (!tenantId) <span class="kw">throw new</span> Error(<span class="str">'User is missing custom:tenantId'</span>);
+  event.response.claimsAndScopeOverrideDetails = {
+    accessTokenGeneration: { claimsToAddOrOverride: { tenantId } },
+  };
+  <span class="kw">return</span> event;
+};</code></pre>
+
+<!-- ============ 9 ============ -->
+<h2 id="perf">9. Performance, caching &amp; resilience</h2>
+<div class="grid grid-2">
+  <div class="card"><h4>Latency</h4><p class="muted" style="margin:0">STS <code>AssumeRole</code> adds
+  ~50–200&nbsp;ms depending on configuration. Acceptable for many use cases; mitigate with caching.</p></div>
+  <div class="card"><h4>Token lifecycle</h4><p class="muted" style="margin:0">Refresh credentials for
+  long-running sessions at ~75% of the token lifetime.</p></div>
+  <div class="card"><h4>Throttling</h4><p class="muted" style="margin:0">STS default quota is ~600 req/s
+  per Region per account, shared across several operations including <code>AssumeRole</code>.</p></div>
+  <div class="card"><h4>Cache key</h4><p class="muted" style="margin:0">Use the same format as the
+  <code>actorId</code>. Derive it from the validated token (already checked by AgentCore inbound auth).</p></div>
+</div>
+<ul>
+  <li>Cache <code>BedrockAgentCoreClient</code> instances, each scoped to the correct <code>actorId</code>;
+  let the SDK's assume-role credential provider refresh automatically.</li>
+  <li>Use SDK retry behaviours to absorb throttling; use a <strong>Regional STS endpoint</strong> (quotas are per Region).</li>
+  <li>Monitor <code>AssumeRole</code> access violations in <strong>CloudTrail</strong>; run end-to-end
+  isolation tests in the deployment pipeline. Common errors: <em>StringLike condition not matching</em>,
+  <em>AssumeRole access denied</em>, <em>missing session tags</em>.</li>
+</ul>
+<div class="danger"><strong>Never log temporary credentials.</strong> Keep them in memory only and
+discard after use.</div>
+
+<!-- ============ 10 ============ -->
+<h2 id="pillars">10. The design through the six Well-Architected pillars</h2>
+<table>
+<thead><tr><th>Pillar</th><th>How this design addresses it</th></tr></thead>
+<tbody>
+<tr><td><span class="pill sec">Security</span></td><td>IAM is the authoritative boundary (defense in depth); three isolation dimensions in the composite <code>actorId</code>; <code>agentId</code> pinned in trust policy; transitive/immutable session tags; trusted IdP; credentials never logged; encryption at rest/in transit and optional CMK inherited from the memory resource.</td></tr>
+<tr><td><span class="pill rel">Reliability</span></td><td>SDK retry + assume-role credential provider for auto-refresh; Regional STS endpoint; graceful handling of throttling; end-to-end isolation tests gate deployment. LTM extraction remains asynchronous — design for the ingest→availability delay.</td></tr>
+<tr><td><span class="pill ops">Operational Excellence</span></td><td>One policy and one namespace to operate; onboarding a tenant requires no new IAM; CloudTrail monitoring of <code>AssumeRole</code> and quota dashboards; IaC-managed roles and attributes.</td></tr>
+<tr><td><span class="pill perf">Performance</span></td><td>Cache scoped clients to amortize the ~50–200&nbsp;ms AssumeRole cost; semantic retrieval ~200&nbsp;ms; parallel strategy processing unaffected by the isolation layer.</td></tr>
+<tr><td><span class="pill cost">Cost</span></td><td>Constant IAM/management cost as tenants scale (no policy multiplication); shared namespace avoids per-tenant resource sprawl; attach only needed strategies.</td></tr>
+<tr><td><span class="pill sus">Sustainability</span></td><td>Fewer provisioned IAM artifacts and resources per tenant; shared infrastructure and bounded retention reduce footprint.</td></tr>
+</tbody>
+</table>
+
+<!-- ============ 11 ============ -->
+<h2 id="checklist">11. Design checklist (acceptance)</h2>
+<div class="card">
+<ul style="margin:0">
+<li>☐ Isolation boundaries decided (tenant? agent? user?) and encoded as the composite <code>actorId</code></li>
+<li>☐ Single shared ABAC policy with two statements (<code>actorId</code> for events, <code>namespace</code> for retrieval)</li>
+<li>☐ Per-agent role per agent; trust policy pins <code>AgentId</code> (StringEquals) and requires Tenant/User tags (StringLike)</li>
+<li>☐ Namespace role separate from the agent execution role (least privilege)</li>
+<li>☐ IdP owned; <code>sub</code> → <code>userId</code>; pre-token Lambda injects <code>custom:tenantId</code></li>
+<li>☐ Session tags marked transitive (immutable on downstream AssumeRole)</li>
+<li>☐ Caching keyed on <code>actorId</code>; credential auto-refresh at ~75% lifetime; Regional STS endpoint</li>
+<li>☐ CloudTrail monitoring + end-to-end isolation tests in the pipeline; credentials never logged</li>
+</ul>
+</div>
+
+<!-- ============ 12 ============ -->
+<h2 id="tradeoffs">12. Trade-offs &amp; alternatives</h2>
+<table>
+<thead><tr><th>Dimension</th><th>Dedicated namespace + policy per tenant</th><th>Shared namespace + ABAC (this design)</th></tr></thead>
+<tbody>
+<tr><td>IAM policy count</td><td>Grows linearly with tenants</td><td>Constant (one shared policy)</td></tr>
+<tr><td>Onboarding time</td><td>Minutes → hours at scale</td><td>Near-instant (no provisioning)</td></tr>
+<tr><td>Isolation strength</td><td>IAM-backed</td><td>IAM-backed (equivalent)</td></tr>
+<tr><td>Runtime latency</td><td>No per-request AssumeRole</td><td>+~50–200&nbsp;ms (mitigated by caching)</td></tr>
+<tr><td>Best fit</td><td>Few, static tenants</td><td>Large, dynamic tenant base that must scale</td></tr>
+</tbody>
+</table>
+<p class="muted">Choose dedicated namespaces only for a small, static tenant set. For any application
+intended to scale to a large, dynamic number of tenants/agents, the shared-namespace ABAC pattern is
+the production default.</p>
+
+<div class="foot">
+<strong>Sources &amp; attribution.</strong> Primary:
+<a href="https://builder.aws.com/content/3C1SCSoe15VaBnmsiMIfGcZfhxM/secure-shared-multi-tenant-agent-memory-namespaces-using-agentcore-memory">Secure shared multi-tenant agent memory namespaces using AgentCore Memory</a> (AWS Builder Center, Apr 2026).
+Supporting: AgentCore Memory API reference, AWS STS <code>AssumeRole</code> &amp; session-tag docs,
+IAM reference for Bedrock AgentCore condition keys, and the foundational
+<em>SaaS tenant isolation with ABAC and AWS IAM</em> pattern. AgentCore Memory concepts (STM/LTM,
+strategies, namespaces) summarized from the three AWS AgentCore Memory blogs cited in
+<code>reference/SOURCES.md</code>. Content was rephrased for compliance with licensing restrictions;
+verify all API shapes, condition keys, and quotas against current AWS documentation before building.
+<br><br>Part of the <strong>AI-PLATFORM</strong> Memory component standard — generic and
+use-case-agnostic. Example agent names (travel-agent, shopping-agent) are illustrative only.
+</div>
+
+</div>
+</body>
+</html>

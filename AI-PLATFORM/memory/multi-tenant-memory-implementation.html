@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Tenant Agent Memory — Implementation Walkthrough</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --ink:#e6edf3; --muted:#9aa7b4;
+    --line:#30363d; --accent:#2f81f7; --accent2:#3fb950; --warn:#d29922; --danger:#f85149;
+    --purple:#a371f7; --teal:#39c5bb; --orange:#ff9500; --code:#0b0f14;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.6;font-size:16px}
+  .wrap{max-width:1080px;margin:0 auto;padding:48px 28px 96px}
+  header.hero{border:1px solid var(--line);border-radius:16px;padding:34px;
+    background:linear-gradient(135deg,#161b22,#0d1117);margin-bottom:34px}
+  .eyebrow{color:var(--accent2);font-weight:700;letter-spacing:.14em;text-transform:uppercase;font-size:12px}
+  h1{font-size:34px;line-height:1.2;margin:10px 0 8px}
+  h2{font-size:25px;margin:48px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+  h3{font-size:19px;margin:28px 0 10px;color:#cdd9e5}
+  h4{font-size:15px;margin:18px 0 6px;color:var(--teal);text-transform:uppercase;letter-spacing:.05em}
+  p{color:var(--ink)} .muted{color:var(--muted)}
+  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+  code{background:var(--code);border:1px solid var(--line);border-radius:5px;padding:1px 6px;
+    font-family:"SF Mono",Menlo,Consolas,monospace;font-size:13.5px;color:#a5d6ff}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:10px;padding:16px 18px;
+    overflow:auto;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:13px;line-height:1.55}
+  pre code{background:none;border:none;padding:0;color:#c9d1d9}
+  .tag{color:#7ee787} .str{color:#a5d6ff} .kw{color:#ff7b72} .com{color:#8b949e} .num{color:#79c0ff} .fn{color:#d2a8ff}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#cdd9e5}
+  tr:nth-child(even) td{background:#12161d}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:16px 0}
+  .grid{display:grid;gap:16px}.grid-3{grid-template-columns:1fr 1fr 1fr}
+  @media(max-width:860px){.grid-3{grid-template-columns:1fr}}
+  .note{border-left:4px solid var(--accent);background:#0f1b2d;padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .warnbox{border-left:4px solid var(--warn);background:#241c0c;padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .danger{border-left:4px solid var(--danger);background:#2a1416;padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  .ok{border-left:4px solid var(--accent2);background:#0f2416;padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+  ul,ol{padding-left:22px} li{margin:5px 0}
+  .step{display:flex;gap:14px;align-items:flex-start;margin:6px 0}
+  .step .n{flex:0 0 auto;width:30px;height:30px;border-radius:50%;background:var(--accent2);color:#06130a;
+    font-weight:800;display:flex;align-items:center;justify-content:center}
+  figure{margin:24px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;overflow:auto}
+  figcaption{color:var(--muted);font-size:13px;text-align:center;margin-top:10px}
+  .toc{columns:2;column-gap:28px} .toc a{display:block;padding:3px 0;font-size:14.5px}
+  @media(max-width:700px){.toc{columns:1}}
+  .kbd{font-family:"SF Mono",monospace;background:#0b0f14;border:1px solid var(--line);
+    border-radius:4px;padding:1px 6px;font-size:12.5px;color:var(--purple)}
+  .foot{margin-top:60px;border-top:1px solid var(--line);padding-top:20px;color:var(--muted);font-size:13px}
+  .t-a{color:var(--purple)}.t-b{color:var(--teal)}.t-c{color:var(--orange)}
+  .chk li::marker{content:"☐  "}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">AI-PLATFORM · Memory Component · Implementation Guide</div>
+  <h1>Multi-Tenant Memory — Production Walkthrough</h1>
+  <p class="muted">A step-by-step build of secure, shared AgentCore Memory namespaces for a worked
+  3-tenant example, using ABAC, STS session tags, and a single IAM policy. Companion to the
+  <a href="multi-tenant-memory-design.html">design document</a>.</p>
+</header>
+
+<div class="card">
+  <strong>Contents</strong>
+  <div class="toc" style="margin-top:10px">
+    <a href="#scenario">0. The worked scenario (3 tenants, 2 agents)</a>
+    <a href="#prereq">1. Prerequisites</a>
+    <a href="#s1">2. Step 1 — Decide isolation boundaries</a>
+    <a href="#s2">3. Step 2 — Create the memory resource</a>
+    <a href="#s3">4. Step 3 — Shared ABAC IAM policy</a>
+    <a href="#s4">5. Step 4 — Per-agent roles &amp; trust policies</a>
+    <a href="#s5">6. Step 5 — Cognito + pre-token Lambda</a>
+    <a href="#s6">7. Step 6 — Runtime: assume role &amp; scoped client</a>
+    <a href="#s7">8. Step 7 — Store &amp; retrieve memory</a>
+    <a href="#s8">9. Step 8 — Caching &amp; token refresh</a>
+    <a href="#verify">10. Step 9 — Verify isolation (tests)</a>
+    <a href="#errors">11. Troubleshooting</a>
+  </div>
+</div>
+
+<!-- =============== scenario =============== -->
+<h2 id="scenario">0. The worked scenario</h2>
+<p>We run a SaaS platform with two agents — a <span class="t-b">travel-agent</span> and a
+<span class="t-c">shopping-agent</span> — serving three customers:</p>
+
+<div class="grid grid-3">
+  <div class="card"><h4 class="t-a">tenant-acme</h4>
+    <p class="muted" style="margin:0">Users: <code>u-1001</code>, <code>u-1002</code>.<br>Uses both agents.</p></div>
+  <div class="card"><h4 class="t-b">tenant-globex</h4>
+    <p class="muted" style="margin:0">Users: <code>u-2001</code>.<br>Uses travel-agent only.</p></div>
+  <div class="card"><h4 class="t-c">tenant-initech</h4>
+    <p class="muted" style="margin:0">Users: <code>u-3001</code>, <code>u-3002</code>.<br>Uses shopping-agent only.</p></div>
+</div>
+
+<p>All of them share <strong>one</strong> memory resource (<code>my_memory</code>) and
+<strong>one</strong> IAM policy. Each user's long-term memory lives under its own composite namespace:</p>
+
+<pre><code><span class="com"># actorId = {tenantId}:{agentId}:{userId}   →   namespace = /{actorId}/my_memory/</span>
+/tenant-acme:travel-agent:u-1001/my_memory/      <span class="com"># Acme user 1, travel</span>
+/tenant-acme:shopping-agent:u-1001/my_memory/    <span class="com"># same user, shopping — isolated</span>
+/tenant-acme:travel-agent:u-1002/my_memory/      <span class="com"># Acme user 2, travel</span>
+/tenant-globex:travel-agent:u-2001/my_memory/    <span class="com"># Globex</span>
+/tenant-initech:shopping-agent:u-3001/my_memory/ <span class="com"># Initech</span>
+/tenant-initech:shopping-agent:u-3002/my_memory/</code></pre>
+
+<figure>
+<svg viewBox="0 0 960 300" width="100%" role="img" aria-label="Namespace isolation map">
+  <style>
+    .lbl{fill:#e6edf3;font:12px "SF Mono",monospace}
+    .box{rx:8;stroke-width:1.5}
+    .cap{fill:#9aa7b4;font:bold 12px sans-serif}
+  </style>
+  <rect x="20" y="30" width="300" height="240" rx="12" fill="#1a1230" stroke="#a371f7"/>
+  <text x="170" y="54" text-anchor="middle" class="cap t-a">tenant-acme</text>
+  <rect class="box" x="40" y="70" width="260" height="34" fill="#0b0f14" stroke="#39c5bb"/>
+  <text x="52" y="92" class="lbl">travel-agent:u-1001 /my_memory</text>
+  <rect class="box" x="40" y="114" width="260" height="34" fill="#0b0f14" stroke="#ff9500"/>
+  <text x="52" y="136" class="lbl">shopping-agent:u-1001 /my_memory</text>
+  <rect class="box" x="40" y="158" width="260" height="34" fill="#0b0f14" stroke="#39c5bb"/>
+  <text x="52" y="180" class="lbl">travel-agent:u-1002 /my_memory</text>
+
+  <rect x="340" y="30" width="270" height="240" rx="12" fill="#0f2824" stroke="#39c5bb"/>
+  <text x="475" y="54" text-anchor="middle" class="cap t-b">tenant-globex</text>
+  <rect class="box" x="360" y="70" width="230" height="34" fill="#0b0f14" stroke="#39c5bb"/>
+  <text x="372" y="92" class="lbl">travel-agent:u-2001 /my_memory</text>
+
+  <rect x="630" y="30" width="310" height="240" rx="12" fill="#2a1d0c" stroke="#ff9500"/>
+  <text x="785" y="54" text-anchor="middle" class="cap t-c">tenant-initech</text>
+  <rect class="box" x="650" y="70" width="270" height="34" fill="#0b0f14" stroke="#ff9500"/>
+  <text x="662" y="92" class="lbl">shopping-agent:u-3001 /my_memory</text>
+  <rect class="box" x="650" y="114" width="270" height="34" fill="#0b0f14" stroke="#ff9500"/>
+  <text x="662" y="136" class="lbl">shopping-agent:u-3002 /my_memory</text>
+
+  <text x="480" y="294" text-anchor="middle" class="cap">All inside ONE memory resource · ONE shared IAM policy · isolation by composite actorId</text>
+</svg>
+<figcaption>Every box is a distinct namespace. IAM rejects any cross-box access before it reaches app code.</figcaption>
+</figure>
+
+<!-- =============== prereq =============== -->
+<h2 id="prereq">1. Prerequisites</h2>
+<ul>
+  <li>An AWS account with Amazon Bedrock AgentCore enabled in your Region (examples use <code>eu-central-1</code>).</li>
+  <li>An Amazon Cognito user pool you <strong>own</strong> (needed to control the <code>custom:tenantId</code> attribute).</li>
+  <li>AgentCore Runtime for each agent with its own execution role.</li>
+  <li>AWS SDK (examples use Node.js + <code>@aws-sdk/client-bedrock-agentcore</code> and <code>fromTemporaryCredentials</code>).</li>
+  <li>Permissions to create IAM roles/policies and Lambda functions.</li>
+</ul>
+
+<!-- =============== step 1 =============== -->
+<h2 id="s1">2. Step 1 — Decide isolation boundaries</h2>
+<p>We need all three dimensions: tenant data must not leak, the two agents must not read each other's
+memories, and users must stay private. So the composite is the full three-part key:</p>
+<pre><code>actorId = "{tenantId}:{agentId}:{userId}"</code></pre>
+<div class="note">If you only needed tenant+agent isolation (shared user memory within a tenant-agent),
+you'd drop <code>userId</code>: <code>actorId = "{tenantId}:{agentId}"</code>. The policy and tags
+follow whatever composite you choose.</div>
+
+<!-- =============== step 2 =============== -->
+<h2 id="s2">3. Step 2 — Create the shared memory resource</h2>
+<p>One memory resource backs every tenant. Configure retention and (for sensitive tenant data) a
+customer-managed KMS key. The namespace template references the composite <code>actorId</code>.</p>
+<pre><code><span class="kw">import</span> boto3, time
+client = boto3.client(<span class="str">"bedrock-agentcore"</span>, region_name=<span class="str">"eu-central-1"</span>)
+
+resp = client.<span class="fn">create_memory</span>(
+    name=<span class="str">"my_memory"</span>,
+    description=<span class="str">"Shared multi-tenant memory"</span>,
+    eventExpiryDuration=<span class="num">90</span>,                 <span class="com"># raw events retained 90 days (max 365)</span>
+    encryptionKeyArn=<span class="str">"arn:aws:kms:eu-central-1:123456789012:key/&lt;id&gt;"</span>,  <span class="com"># CMK for sensitive tenants</span>
+    memoryStrategies=[
+        {<span class="str">"userPreferenceMemoryStrategy"</span>: {
+            <span class="str">"name"</span>: <span class="str">"prefs"</span>,
+            <span class="str">"namespaceTemplate"</span>: [<span class="str">"/{actorId}/my_memory/"</span>]}},
+    ],
+)
+memory_id = resp[<span class="str">"memoryId"</span>]</code></pre>
+<div class="warnbox">The <code>{actorId}</code> placeholder is resolved at event time from the actor you
+pass in. Because we scope the credentials by <code>actorId</code>, the resolved namespace always lands
+inside the caller's isolation boundary.</div>
+
+<!-- =============== step 3 =============== -->
+<h2 id="s3">4. Step 3 — Author the single shared ABAC policy</h2>
+<p>Create <strong>one</strong> managed policy, <code>MemoryNamespaceAbacPolicy</code>. Two statements:
+event actions keyed on <code>actorId</code>, retrieval actions keyed on <code>namespace</code>. Both
+read <code>tenantId</code>/<code>agentId</code>/<code>userId</code> from the principal's session tags.</p>
+<pre><code>{
+  <span class="tag">"Version"</span>: <span class="str">"2012-10-17"</span>,
+  <span class="tag">"Statement"</span>: [
+    {
+      <span class="tag">"Effect"</span>: <span class="str">"Allow"</span>,
+      <span class="tag">"Action"</span>: [
+        <span class="str">"bedrock-agentcore:CreateEvent"</span>, <span class="str">"bedrock-agentcore:GetEvent"</span>,
+        <span class="str">"bedrock-agentcore:ListEvents"</span>,  <span class="str">"bedrock-agentcore:DeleteEvent"</span>
+      ],
+      <span class="tag">"Resource"</span>: <span class="str">"arn:aws:bedrock-agentcore:eu-central-1:123456789012:memory/my_memory"</span>,
+      <span class="tag">"Condition"</span>: { <span class="tag">"StringLike"</span>: {
+        <span class="tag">"bedrock-agentcore:actorId"</span>:
+          <span class="str">"${aws:PrincipalTag/tenantId}:${aws:PrincipalTag/agentId}:${aws:PrincipalTag/userId}"</span>
+      }}
+    },
+    {
+      <span class="tag">"Effect"</span>: <span class="str">"Allow"</span>,
+      <span class="tag">"Action"</span>: [
+        <span class="str">"bedrock-agentcore:RetrieveMemoryRecords"</span>, <span class="str">"bedrock-agentcore:ListMemoryRecords"</span>
+      ],
+      <span class="tag">"Resource"</span>: <span class="str">"arn:aws:bedrock-agentcore:eu-central-1:123456789012:memory/my_memory"</span>,
+      <span class="tag">"Condition"</span>: { <span class="tag">"StringLike"</span>: {
+        <span class="tag">"bedrock-agentcore:namespace"</span>:
+          <span class="str">"/${aws:PrincipalTag/tenantId}:${aws:PrincipalTag/agentId}:${aws:PrincipalTag/userId}/*"</span>
+      }}
+    }
+  ]
+}</code></pre>
+<div class="ok">This one policy serves <strong>all three tenants and both agents</strong>. Adding
+tenant-waystar tomorrow requires zero IAM changes.</div>
+
+<!-- =============== step 4 =============== -->
+<h2 id="s4">5. Step 4 — Create a per-agent role with a scoped trust policy</h2>
+<p>Create two roles — <code>TravelAgentMemoryRole</code> and <code>ShoppingAgentMemoryRole</code> — and
+attach the shared <code>MemoryNamespaceAbacPolicy</code> to <em>both</em>. The difference is the trust
+policy, which pins the <code>AgentId</code>. Here's the shopping agent's:</p>
+<pre><code>{
+  <span class="tag">"Version"</span>: <span class="str">"2012-10-17"</span>,
+  <span class="tag">"Statement"</span>: [{
+    <span class="tag">"Effect"</span>: <span class="str">"Allow"</span>,
+    <span class="tag">"Principal"</span>: { <span class="tag">"AWS"</span>: <span class="str">"arn:aws:iam::123456789012:role/ShoppingAgentExecutionRole"</span> },
+    <span class="tag">"Action"</span>: [ <span class="str">"sts:AssumeRole"</span>, <span class="str">"sts:TagSession"</span> ],
+    <span class="tag">"Condition"</span>: {
+      <span class="tag">"StringEquals"</span>: { <span class="tag">"aws:RequestTag/AgentId"</span>: <span class="str">"shopping-agent"</span> },
+      <span class="tag">"StringLike"</span>:   { <span class="tag">"aws:RequestTag/TenantId"</span>: <span class="str">"?*"</span>,
+                           <span class="tag">"aws:RequestTag/UserId"</span>:   <span class="str">"?*"</span> }
+    }
+  }]
+}</code></pre>
+<p>The travel agent's role is identical but pins <code>"aws:RequestTag/AgentId": "travel-agent"</code>
+and trusts <code>TravelAgentExecutionRole</code>. Because <code>agentId</code> is fixed in trust, the
+shopping agent cannot assume the travel role even if misconfigured.</p>
+
+<!-- =============== step 5 =============== -->
+<h2 id="s5">6. Step 5 — Configure Cognito + pre-token-generation Lambda</h2>
+<div class="step"><div class="n">a</div><div>Add a custom attribute <code>custom:tenantId</code> to the user pool and set it per user (e.g. <code>tenant-acme</code> for <code>u-1001</code>).</div></div>
+<div class="step"><div class="n">b</div><div>Attach a pre-token-generation Lambda so the <code>tenantId</code> claim lands in the access token (custom attributes are excluded by default).</div></div>
+<pre><code><span class="kw">export const</span> handler: PreTokenGenerationV2TriggerHandler = <span class="kw">async</span> (event) => {
+  <span class="kw">const</span> tenantId = event.request.userAttributes[<span class="str">'custom:tenantId'</span>];
+  <span class="kw">if</span> (!tenantId) <span class="kw">throw new</span> Error(<span class="str">'User is missing custom:tenantId attribute'</span>);
+  event.response.claimsAndScopeOverrideDetails = {
+    accessTokenGeneration: { claimsToAddOrOverride: { tenantId } },
+  };
+  <span class="kw">return</span> event;
+};</code></pre>
+<div class="note"><code>userId</code> comes from the token's <code>sub</code> — Cognito's immutable user
+id — so you don't store a second identifier.</div>
+
+<!-- =============== step 6 =============== -->
+<h2 id="s6">7. Step 6 — At runtime: assume the role &amp; build a scoped client</h2>
+<p>The agent extracts <code>tenantId</code> (claim) and <code>userId</code> (<code>sub</code>), takes its
+own <code>AGENT_ID</code> from an environment variable, and assumes the per-agent role passing all three
+as <strong>transitive</strong> session tags. The returned credentials are scoped to exactly one namespace.</p>
+<pre><code><span class="kw">import</span> { BedrockAgentCoreClient } <span class="kw">from</span> <span class="str">'@aws-sdk/client-bedrock-agentcore'</span>;
+<span class="kw">import</span> { fromTemporaryCredentials } <span class="kw">from</span> <span class="str">'@aws-sdk/credential-providers'</span>;
+
+<span class="com">// AGENT_ID supplied as an env var at deployment, e.g. "shopping-agent"</span>
+<span class="kw">const</span> AGENT_ID  = process.env.AGENT_ID;
+<span class="kw">const</span> ROLE_ARN  = process.env.TVM_ROLE_ARN;   <span class="com">// the per-agent memory role</span>
+<span class="kw">const</span> REGION    = <span class="str">'eu-central-1'</span>;
+
+<span class="com">// tenantId from the validated token claim; userId from sub</span>
+<span class="kw">function</span> <span class="fn">buildMemoryClient</span>(tenantId, userId) {
+  <span class="kw">return new</span> BedrockAgentCoreClient({
+    region: REGION,
+    credentials: <span class="fn">fromTemporaryCredentials</span>({
+      params: {
+        RoleArn: ROLE_ARN,
+        RoleSessionName: <span class="str">`tenant-${tenantId.replace(/[^\w+=,.@-]/g,'_').substring(0,50)}`</span>,
+        Tags: [
+          { Key: <span class="str">'TenantId'</span>, Value: tenantId },
+          { Key: <span class="str">'UserId'</span>,   Value: userId },
+          { Key: <span class="str">'AgentId'</span>,  Value: AGENT_ID },
+        ],
+        TransitiveTagKeys: [<span class="str">'TenantId'</span>, <span class="str">'UserId'</span>, <span class="str">'AgentId'</span>],
+        DurationSeconds: <span class="num">900</span>,
+      },
+    }),
+  });
+}</code></pre>
+<p>For <span class="t-a">tenant-acme</span>'s user <code>u-1001</code> on the shopping agent, the composite
+resolves to <code>actorId = "tenant-acme:shopping-agent:u-1001"</code> and the credentials can only touch
+<code>/tenant-acme:shopping-agent:u-1001/my_memory/*</code>.</p>
+<div class="danger"><strong>Marking tags transitive makes them immutable</strong> if these credentials are
+used to assume another role downstream — a tenant can't be swapped mid-chain.</div>
+
+<!-- =============== step 7 =============== -->
+<h2 id="s7">8. Step 7 — Store &amp; retrieve memory through the scoped client</h2>
+<pre><code><span class="kw">const</span> actorId = <span class="str">`${tenantId}:${AGENT_ID}:${userId}`</span>;  <span class="com">// tenant-acme:shopping-agent:u-1001</span>
+<span class="kw">const</span> memory  = <span class="fn">buildMemoryClient</span>(tenantId, userId);
+
+<span class="com">// write an event (STM) — allowed only if actorId matches session tags</span>
+<span class="kw">await</span> memory.send(<span class="kw">new</span> CreateEventCommand({
+  memoryId: <span class="str">'my_memory'</span>, actorId, sessionId,
+  eventTimestamp: Date.now(),
+  payload: [{ conversational: { role: <span class="str">'USER'</span>, content: { text: <span class="str">'I prefer aisle seats'</span> } } }],
+}));
+
+<span class="com">// retrieve long-term records (LTM) — namespace condition enforced by IAM</span>
+<span class="kw">const</span> recs = <span class="kw">await</span> memory.send(<span class="kw">new</span> RetrieveMemoryRecordsCommand({
+  memoryId: <span class="str">'my_memory'</span>,
+  namespace: <span class="str">`/${actorId}/my_memory/`</span>,
+  searchCriteria: { searchQuery: <span class="str">'seat preference'</span>, topK: <span class="num">5</span> },
+}));
+<span class="com">// Hydrate the agent context with recs BEFORE it reasons (retrieve → reason → store).</span></code></pre>
+<div class="warnbox">Long-term extraction/consolidation is asynchronous (~20–40s). Use <code>ListEvents</code>
+for immediate recall within a session; <code>RetrieveMemoryRecords</code> for cross-session knowledge
+once it's consolidated.</div>
+
+<!-- =============== step 8 =============== -->
+<h2 id="s8">9. Step 8 — Caching &amp; token refresh</h2>
+<p>The ~50–200&nbsp;ms AssumeRole cost shouldn't hit every request. Cache one
+<code>BedrockAgentCoreClient</code> per <code>actorId</code>; the SDK's assume-role credential provider
+auto-renews near expiry.</p>
+<pre><code><span class="kw">const</span> clientCache = <span class="kw">new</span> Map();   <span class="com">// key = actorId (same format as namespace)</span>
+
+<span class="kw">function</span> <span class="fn">getClient</span>(tenantId, userId) {
+  <span class="kw">const</span> key = <span class="str">`${tenantId}:${AGENT_ID}:${userId}`</span>;
+  <span class="kw">if</span> (!clientCache.has(key)) clientCache.set(key, <span class="fn">buildMemoryClient</span>(tenantId, userId));
+  <span class="kw">return</span> clientCache.get(key);   <span class="com">// SDK refreshes creds at ~75% of lifetime</span>
+}</code></pre>
+<ul>
+  <li>Derive the cache key from the <strong>validated token</strong> (already checked by AgentCore inbound auth).</li>
+  <li>Enable SDK retry behaviour to ride out STS throttling (default quota ~600 req/s per Region/account).</li>
+  <li>Use a <strong>Regional STS endpoint</strong> — quotas are per Region.</li>
+</ul>
+
+<!-- =============== verify =============== -->
+<h2 id="verify">10. Step 9 — Verify isolation (make it part of deployment)</h2>
+<p>Prove the boundary with negative tests. Each should return <em>AccessDenied</em>, not data:</p>
+<table>
+<thead><tr><th>#</th><th>Test</th><th>Expected</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><span class="t-a">acme</span>:shopping:u-1001 reads <code>/tenant-globex:travel-agent:u-2001/my_memory/*</code></td><td>Denied (tenant + agent mismatch)</td></tr>
+<tr><td>2</td><td><span class="t-a">acme</span>:travel:u-1001 reads <code>/tenant-acme:shopping-agent:u-1001/my_memory/*</code></td><td>Denied (agent mismatch, same tenant+user)</td></tr>
+<tr><td>3</td><td><span class="t-a">acme</span>:shopping:u-1001 reads <code>/tenant-acme:shopping-agent:u-1002/my_memory/*</code></td><td>Denied (user mismatch)</td></tr>
+<tr><td>4</td><td>Assume ShoppingAgentMemoryRole with <code>AgentId=travel-agent</code></td><td>Denied by trust policy</td></tr>
+<tr><td>5</td><td>Assume role with no <code>TenantId</code>/<code>UserId</code> tag</td><td>Denied (StringLike <code>?*</code> fails)</td></tr>
+<tr><td>6</td><td>acme:shopping:u-1001 reads its own <code>/tenant-acme:shopping-agent:u-1001/my_memory/*</code></td><td>Allowed ✓</td></tr>
+</tbody>
+</table>
+<div class="ok">Run these as an automated suite in the deploy pipeline, and watch
+<code>AssumeRole</code> denials in CloudTrail in production.</div>
+
+<!-- =============== errors =============== -->
+<h2 id="errors">11. Troubleshooting common errors</h2>
+<table>
+<thead><tr><th>Error</th><th>Likely cause</th><th>Fix</th></tr></thead>
+<tbody>
+<tr><td><code>StringLike condition not matching</code></td><td>Requested namespace/actorId ≠ session tags</td><td>Confirm composite order <code>tenant:agent:user</code> matches the policy and the namespace passed to the API.</td></tr>
+<tr><td><code>AssumeRole access denied</code></td><td>Trust policy rejected the assume</td><td>Check execution-role principal, <code>AgentId</code> StringEquals, and that Tenant/User tags are present.</td></tr>
+<tr><td><code>Missing session tags</code></td><td>Tags not passed (or not transitive)</td><td>Pass all three tags and list them in <code>TransitiveTagKeys</code>.</td></tr>
+<tr><td>STS throttling</td><td>&gt; ~600 req/s or no caching</td><td>Cache clients per actorId; enable SDK retries; Regional endpoint.</td></tr>
+</tbody>
+</table>
+<div class="danger"><strong>Never log temporary credentials.</strong> Keep them in memory and discard
+after use; log only non-sensitive identifiers.</div>
+
+<h3>Production go-live checklist</h3>
+<div class="card"><ul class="chk" style="margin:0;list-style:none;padding-left:0">
+<li>Composite actorId order fixed and identical across policy, trust, and runtime</li>
+<li>Single shared ABAC policy attached to every per-agent role</li>
+<li>Per-agent trust policies pin AgentId; Tenant/User required via StringLike <code>?*</code></li>
+<li>Namespace role separate from execution role</li>
+<li>Cognito owns <code>custom:tenantId</code>; pre-token Lambda deployed; <code>sub</code> = userId</li>
+<li>Transitive session tags; DurationSeconds set; Regional STS endpoint</li>
+<li>Client cache keyed by actorId; auto-refresh verified</li>
+<li>Negative isolation tests green in CI; CloudTrail alarms on AssumeRole denials</li>
+<li>No credential logging anywhere in the path</li>
+</ul></div>
+
+<div class="foot">
+<strong>Sources &amp; attribution.</strong> Built from
+<a href="https://builder.aws.com/content/3C1SCSoe15VaBnmsiMIfGcZfhxM/secure-shared-multi-tenant-agent-memory-namespaces-using-agentcore-memory">Secure shared multi-tenant agent memory namespaces using AgentCore Memory</a>
+(AWS Builder Center, Apr 2026) and the AgentCore Memory concepts in <code>reference/SOURCES.md</code>.
+Tenant names (acme, globex, initech) and agent names (travel-agent, shopping-agent) are illustrative.
+Code is reference-grade — verify API shapes, condition keys, and STS quotas against current AWS
+documentation before deploying. Content was rephrased for compliance with licensing restrictions.
+Companion: <a href="multi-tenant-memory-design.html">design document</a>.
+</div>
+
+</div>
+</body>
+</html>

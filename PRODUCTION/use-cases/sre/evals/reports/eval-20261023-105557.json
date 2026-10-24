@@ -1,0 +1,156 @@
+{
+  "runs": [
+    {
+      "scenario_id": "pod-crashloop-bad-config",
+      "tenant_id": "globex-fintech",
+      "root_cause": {
+        "score": 1.0,
+        "identified_true_cause": true,
+        "rationale": "The agent correctly identified the exact root cause: ConfigMap key rename from KAFKA_BROKERS to KAFKA_BOOTSTRAP in payments-config-v5 for payments-svc v5.1.0, with the application code still referencing the old key name. The agent accurately described the failure mechanism (startup failure due to missing config, exit code 1, leading to CrashLoopBackOff). The agent identified the correct version (v5.1.0), the correct configuration artifact (ConfigMap), the exact key mismatch (KAFKA_BROKERS vs KAFKA_BOOTSTRAP), and the correct consequence (pod crashes and CrashLoopBackOff). This matches the ground truth in all critical dimensions: the trigger (config key rename), the mechanism (code/config mismatch causing startup exception), and the outcome (CrashLoopBackOff reducing healthy pod ratio)."
+      },
+      "hypotheses": {
+        "per_hypothesis": [
+          {
+            "gt_id": "h1",
+            "expected": "confirm",
+            "agent_status": "confirmed",
+            "correct": true,
+            "statement": "payments-svc v5.1.0 config key mismatch (KAFKA_BROKERS vs KAFKA_BOOTSTRAP) causes startup crash -> CrashLoopBackOff"
+          },
+          {
+            "gt_id": "h2",
+            "expected": "reject",
+            "agent_status": "rejected",
+            "correct": true,
+            "statement": "Kafka (MSK) outage is breaking payments-svc"
+          },
+          {
+            "gt_id": "h3",
+            "expected": "reject",
+            "agent_status": "rejected",
+            "correct": true,
+            "statement": "node resource pressure (OOMKill) is killing pods"
+          },
+          {
+            "gt_id": "h4",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "image pull failure prevented pods from starting"
+          }
+        ],
+        "confirm_accuracy": 1.0,
+        "red_herring_rejection": 0.6666666666666666,
+        "overall": 0.75
+      },
+      "remediation": {
+        "score": 0.95,
+        "rationale": "The agent's remediation is highly aligned with the ground truth. Both identify the core issue (missing KAFKA_BROKERS key) and propose the same immediate fixes: rollback or add the key back. Both recommend process improvements (config validation/contract checks). The agent provides more operational detail with specific version numbers and two valid immediate options, plus explicitly mentions updating code to use KAFKA_BOOTSTRAP as a permanent fix. The agent's solution is sound, safe, addresses the root cause, and includes no harmful steps. Minor deduction only because it's slightly more verbose than necessary, but this actually adds clarity rather than detracting from quality."
+      },
+      "confidence": "high",
+      "confidence_calibrated": true,
+      "agent_confirmed_hypothesis_id": "h1",
+      "_agent_result": {
+        "conclusion": {
+          "root_cause": "ConfigMap key rename in payments-config-v5 (KAFKA_BROKERS \u2192 KAFKA_BOOTSTRAP) caused payments-svc v5.1.0 to fail during startup when attempting to read the required Kafka broker configuration. The application code still referenced the old KAFKA_BROKERS environment variable which no longer existed in the ConfigMap, resulting in immediate startup failure with exit code 1 and subsequent CrashLoopBackOff across all pods.",
+          "confirmed_hypothesis_id": "h1",
+          "timeline": [
+            "08:00Z - MSK routine patch completed successfully; cluster remained healthy with no impact to existing services",
+            "11:02:00Z - Deploy payments-svc v5.1.0 with payments-config-v5 ConfigMap containing renamed key (KAFKA_BROKERS \u2192 KAFKA_BOOTSTRAP); deploy summary explicitly notes 'code still reads KAFKA_BROKERS'",
+            "11:02:40Z - Container image pull succeeded for v5.1.0",
+            "11:03:12Z - First pod crash with exit code 1 (75 seconds post-deploy) indicating application-level startup failure",
+            "11:04:00Z - healthy_pod_ratio dropped to 50% as multiple pods entered CrashLoopBackOff",
+            "11:05:00Z - Restart count reached 6; CrashLoopBackOff pattern established with exponential backoff",
+            "11:08:00Z - api-gateway-svc 5xx error rate spiked from 0.2% to 6.4% due to payments-svc unavailability",
+            "11:15:00Z - healthy_pod_ratio reached 0%; complete service outage with 22 restarts",
+            "11:20:00Z - Restart count escalated to 54; pods continued crash loop through end of observation window"
+          ],
+          "remediation": "IMMEDIATE: Rollback to payments-svc v5.0.x with payments-config-v4 ConfigMap OR add KAFKA_BROKERS key back to payments-config-v5 with same value as KAFKA_BOOTSTRAP. PERMANENT FIX: Update payments-svc v5.1.0 code to read KAFKA_BOOTSTRAP environment variable instead of KAFKA_BROKERS, then redeploy with payments-config-v5. PROCESS: Implement pre-deployment validation to detect environment variable mismatches between code and ConfigMaps; add integration tests that verify all required config keys are present and readable during startup.",
+          "confidence": "high"
+        },
+        "hypotheses": [
+          {
+            "id": "h1",
+            "status": "confirmed",
+            "statement": "ConfigMap key rename (KAFKA_BROKERS -> KAFKA_BOOTSTRAP) in payments-config-v5 caused payments-svc v5.1.0 to fail reading required Kafka configuration during sta"
+          },
+          {
+            "id": "h2",
+            "status": "rejected",
+            "statement": "MSK routine patch at 08:00Z introduced breaking changes (TLS 1.3 requirement, SASL/SCRAM mechanism change, or Kafka protocol version bump) that payments-svc v5."
+          },
+          {
+            "id": "h3",
+            "status": "rejected",
+            "statement": "RED HERRING (plausible-but-likely-wrong): payments-svc v5.1.0 introduced a code defect (null pointer dereference, unhandled exception in dependency initializati"
+          },
+          {
+            "id": "h4",
+            "status": "rejected",
+            "statement": "ConfigMap payments-config-v5 contains additional malformed configuration beyond the key rename (invalid YAML syntax, malformed Kafka broker URLs, invalid port n"
+          },
+          {
+            "id": "h5",
+            "status": "rejected",
+            "statement": "Resource constraints (OOMKilled due to v5.1.0 memory leak or increased baseline memory, CPU throttling preventing startup completion, or pod eviction due to nod"
+          }
+        ]
+      },
+      "trace": {
+        "trace_id": "6adaef550ebd15b33871a52f36f9a01a",
+        "found_spans": 24,
+        "steps": [
+          {
+            "span": "llm.generate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 30516.2,
+            "input_tokens": 2372,
+            "output_tokens": 1511
+          },
+          {
+            "span": "a2a.delegate.telemetry",
+            "kind": "delegation",
+            "duration_ms": 14141.2
+          },
+          {
+            "span": "a2a.delegate.change",
+            "kind": "delegation",
+            "duration_ms": 16405.7
+          },
+          {
+            "span": "llm.evaluate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 16695.5,
+            "input_tokens": 2700,
+            "output_tokens": 864
+          },
+          {
+            "span": "llm.conclude",
+            "kind": "llm",
+            "duration_ms": 10905.9,
+            "input_tokens": 3604,
+            "output_tokens": 619
+          },
+          {
+            "span": "investigation",
+            "kind": "investigation",
+            "duration_ms": 92025.3
+          },
+          {
+            "span": "a2a.handle.SRE Investigator Agent",
+            "kind": "a2a_server",
+            "duration_ms": 92032.6
+          }
+        ],
+        "delegation_count": 2,
+        "tokens": {
+          "input": 26028,
+          "output": 8982,
+          "total": 35010
+        },
+        "errors": [],
+        "root_total_ms": 92025.3
+      }
+    }
+  ]
+}

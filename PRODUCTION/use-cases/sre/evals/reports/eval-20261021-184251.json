@@ -1,0 +1,161 @@
+{
+  "runs": [
+    {
+      "scenario_id": "rds-connection-exhaustion",
+      "tenant_id": "acme-retail",
+      "root_cause": {
+        "score": 1.0,
+        "identified_true_cause": true,
+        "rationale": "The agent's root cause analysis is exceptionally thorough and accurately identifies all critical elements of the ground truth: (1) The product-api v2.4.0 deploy at 14:08 as the trigger event; (2) The dual mechanism of reduced per-pod connection pool (20\u21928) combined with increased replicas (3\u21929); (3) The new N+1 query pattern that holds connections longer (220ms vs 50ms baseline); (4) The aggregate connection exhaustion at product-db exceeding max_connections=100; (5) The cascading failure to checkout-api resulting in 5xx errors. The agent goes beyond the ground truth by quantifying the exact mechanics (72 base connections from product-api + ~15 from checkout-api + ~10 from others = ~97-100, hitting the ceiling) and providing specific evidence (pool exhaustion with pending=37, active connections pinned at 100, 'too many clients' errors). The causal chain is correctly identified with precise timing and the agent distinguishes between pod-level pool saturation and database-level connection ceiling exhaustion. This is a textbook-quality root cause analysis that identifies the true cause, mechanism, and trigger with supporting quantitative evidence."
+      },
+      "hypotheses": {
+        "per_hypothesis": [
+          {
+            "gt_id": "h1",
+            "expected": "confirm",
+            "agent_status": "confirmed",
+            "correct": true,
+            "statement": "product-db connection pool exhausted (connections hit max_connections), caused by the 14:08 product-api deploy"
+          },
+          {
+            "gt_id": "h2",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "payment-gateway outage is causing checkout failures"
+          },
+          {
+            "gt_id": "h3",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "ElastiCache (cache) eviction storm is the root cause"
+          },
+          {
+            "gt_id": "h4",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "general traffic surge overloaded checkout-api CPU"
+          }
+        ],
+        "confirm_accuracy": 1.0,
+        "red_herring_rejection": 0.0,
+        "overall": 0.25
+      },
+      "remediation": {
+        "score": 0.85,
+        "rationale": "The agent's remediation is largely sound and well-structured. STRENGTHS: (1) Correctly prioritizes rollback to v2.3.x as immediate action, addressing the root cause (N+1 query); (2) Appropriately identifies raising max_connections as a stopgap measure; (3) Includes comprehensive monitoring improvements (connection pool metrics, alerting); (4) Proposes proper long-term fix (refactoring N+1 query pattern); (5) Adds valuable preventive measures (pre-deployment validation, connection sizing formula). WEAKNESSES: (1) The immediate action to increase max_connections to 150+ is reasonable but less conservative than ground-truth's 'stopgap only' framing\u2014agent could emphasize this is temporary more strongly; (2) Step 3 (restore pool to 20) conflicts slightly with ground-truth's suggestion to 'reduce replica count' as an alternative to raising pool size\u2014agent doesn't explore reducing replicas; (3) Minor: read replicas suggestion (step 8) adds complexity not in ground-truth, though not harmful. Overall, the remediation addresses the true cause, is safe, avoids harmful steps, and adds valuable operational improvements beyond the ground-truth, justifying a strong score with minor deductions for not fully exploring the replica-reduction alternative."
+      },
+      "confidence": "high",
+      "confidence_calibrated": true,
+      "agent_confirmed_hypothesis_id": "h1",
+      "_agent_result": {
+        "conclusion": {
+          "root_cause": "Product-api v2.4.0 deployment at 14:08Z introduced a dual-factor root cause that exhausted database connections: (1) An N+1 query pattern in the new availability join path executing per-item SELECT queries averaging 220ms (vs 50ms baseline), holding connections 4x longer and saturating the reduced per-pod connection pools (20\u21928) faster than connection cycling could recover; (2) The simultaneous replica scale-up (3\u21929 pods) increased total connection demand to 72 base connections (9\u00d78), which when combined with checkout-api (~15) and other services (~10) exceeded the product-db max_connections hard limit of 100. The N+1 inefficiency caused immediate pool saturation within individual pods (pool exhausted, pending=37 at 14:17Z), while the database ceiling prevented any new connections from being established system-wide (active connections pinned at exactly 100 from 14:18Z, 'too many clients' errors at 14:18Z and 14:22Z). This dual exhaustion cascaded 503 errors to checkout-api, spiking its 5xx rate from 0.2% to 14.2%.",
+          "confirmed_hypothesis_id": "h1",
+          "timeline": [
+            "14:08:00Z - Product-api v2.4.0 deployed with N+1 query pattern (220ms avg queries), reduced connection pool (20\u21928), and replica scale (3\u21929 pods)",
+            "14:08:40Z - All 9 product-api pods running, establishing 72 base connections (9\u00d78 pool size)",
+            "14:10:00Z - Product-db active connections reached 63, connection pool wait time escalated to 120ms (from 3ms baseline)",
+            "14:12:00Z - Slow query log detected N+1 pattern: 'SELECT * FROM products p LEFT JOIN inventory i ... executed per-item, 220ms avg'",
+            "14:14:00Z - Product-db active connections reached 88, approaching max_connections limit of 100",
+            "14:15:00Z - Checkout-api 5xx rate began climbing from 0.2% baseline",
+            "14:17:40Z - Product-api connection pool exhaustion error: 'pool exhausted, size=8, pending=37'",
+            "14:18:00Z - Product-db active connections pinned at exactly 100 (max_connections ceiling hit)",
+            "14:18:05Z - First 'too many clients already' error logged on product-db",
+            "14:19:00Z - Product-db ConnectionLimit event triggered (max_connections=100 reached)",
+            "14:20:12Z - Checkout-api error: 'upstream product-api returned 503'",
+            "14:22:11Z - Second 'too many clients already' error logged on product-db",
+            "14:25:00Z - Connection pool wait time peaked at 5000ms",
+            "14:28:00Z - Checkout-api 5xx rate reached 14.2%"
+          ],
+          "remediation": "IMMEDIATE: (1) Rollback product-api to v2.3.x to eliminate N+1 query pattern and restore 50ms query baseline; (2) Increase product-db max_connections from 100 to 150+ to provide headroom for 9-pod topology (9\u00d78 + 15 + 10 + 5 = 102 connections minimum). SHORT-TERM: (3) Restore per-pod connection pool to 20 (from 8) after confirming database can support 9\u00d720=180 connections; (4) Add connection pool metrics (in-use, pending, wait time) to product-api dashboards with alerting thresholds. LONG-TERM: (5) Refactor availability join path to use batch queries instead of per-item N+1 pattern before redeploying v2.4.0; (6) Implement connection pool sizing formula based on replica count and database limits; (7) Add pre-deployment validation to verify total connection demand (replicas \u00d7 pool size \u00d7 services) stays below 80% of max_connections; (8) Consider read replicas for product-db to distribute connection load.",
+          "confidence": "high"
+        },
+        "hypotheses": [
+          {
+            "id": "h1",
+            "status": "confirmed",
+            "statement": "Product-api v2.4.0 introduced an N+1 query pattern in the new availability join path that holds connections 4x longer (220ms vs 50ms baseline), exhausting the r"
+          },
+          {
+            "id": "h2",
+            "status": "confirmed",
+            "statement": "Product-db max_connections limit (100) is insufficient for new topology: 9 product-api pods \u00d7 8 pool = 72 base connections, plus checkout-api (~15), other servi"
+          },
+          {
+            "id": "h3",
+            "status": "investigating",
+            "statement": "Product-api v2.4.0 has a connection leak in the new availability join path: connections are acquired but not properly released in error/timeout scenarios (missi"
+          },
+          {
+            "id": "h4",
+            "status": "rejected",
+            "statement": "RED HERRING: Checkout-api v1.9.2 deploy (20 hours prior at 2026-02-09T18:00Z) introduced a subtle regression where the 'copy change on confirmation page' actual"
+          },
+          {
+            "id": "h5",
+            "status": "rejected",
+            "statement": "The replica scale-up from 3\u21929 pods triggered a thundering herd during product-api initialization at 14:08Z: all 9 pods simultaneously attempted to establish con"
+          }
+        ]
+      },
+      "trace": {
+        "trace_id": "6ad8b9a96a627c424d09f6121b2b2b66",
+        "found_spans": 24,
+        "steps": [
+          {
+            "span": "llm.generate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 30805.1,
+            "input_tokens": 2839,
+            "output_tokens": 1513
+          },
+          {
+            "span": "a2a.delegate.telemetry",
+            "kind": "delegation",
+            "duration_ms": 15630.8
+          },
+          {
+            "span": "a2a.delegate.change",
+            "kind": "delegation",
+            "duration_ms": 19872.6
+          },
+          {
+            "span": "llm.evaluate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 18440.5,
+            "input_tokens": 3226,
+            "output_tokens": 1113
+          },
+          {
+            "span": "llm.conclude",
+            "kind": "llm",
+            "duration_ms": 18815.5,
+            "input_tokens": 4482,
+            "output_tokens": 1025
+          },
+          {
+            "span": "investigation",
+            "kind": "investigation",
+            "duration_ms": 105922.5
+          },
+          {
+            "span": "a2a.handle.SRE Investigator Agent",
+            "kind": "a2a_server",
+            "duration_ms": 105928.3
+          }
+        ],
+        "delegation_count": 2,
+        "tokens": {
+          "input": 31641,
+          "output": 10953,
+          "total": 42594
+        },
+        "errors": [],
+        "root_total_ms": 105922.5
+      }
+    }
+  ]
+}

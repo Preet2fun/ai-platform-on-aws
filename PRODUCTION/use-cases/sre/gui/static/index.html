@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SRE Agent — Hypothesis Board</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>🧭 SRE Agent — Hypothesis Board</h1>
+    <div class="controls">
+      <select id="tenant"></select>
+      <select id="scenario"></select>
+      <button id="run">Investigate</button>
+      <span id="status" class="status"></span>
+    </div>
+    <div id="alarm" class="alarm"></div>
+  </header>
+
+  <main>
+    <section class="board">
+      <div class="lane" data-lane="candidate"><h2>Candidate</h2><div class="cards" id="lane-candidate"></div></div>
+      <div class="lane" data-lane="investigating"><h2>Investigating</h2><div class="cards" id="lane-investigating"></div></div>
+      <div class="lane confirmed" data-lane="confirmed"><h2>Confirmed</h2><div class="cards" id="lane-confirmed"></div></div>
+      <div class="lane rejected" data-lane="rejected"><h2>Rejected</h2><div class="cards" id="lane-rejected"></div></div>
+    </section>
+
+    <aside class="side">
+      <div class="panel">
+        <h3>Thought stream</h3>
+        <ol id="thoughts" class="thoughts"></ol>
+      </div>
+      <div class="panel" id="conclusion-panel" hidden>
+        <h3>Root cause <span id="confidence" class="badge"></span></h3>
+        <p id="root-cause"></p>
+        <h4>Timeline</h4>
+        <ul id="timeline"></ul>
+      </div>
+      <div class="panel remediation" id="remediation-panel" hidden>
+        <h3>Proposed remediation <span class="hitl">HITL — approval required</span></h3>
+        <p id="remediation"></p>
+        <div class="actions">
+          <button class="approve" disabled title="Demo only — remediation is never auto-applied">Approve (disabled)</button>
+          <button class="reject-btn" disabled>Reject (disabled)</button>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

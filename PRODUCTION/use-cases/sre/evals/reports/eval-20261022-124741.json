@@ -1,0 +1,772 @@
+{
+  "runs": [
+    {
+      "scenario_id": "rds-connection-exhaustion",
+      "tenant_id": "acme-retail",
+      "root_cause": {
+        "score": 1.0,
+        "identified_true_cause": true,
+        "rationale": "The agent correctly identified the complete root cause with precise mechanism: (1) product-api v2.4.0 deploy at 14:08 as the trigger, (2) the specific configuration changes (pool 20\u21928, replicas 3\u21929), (3) the mathematical connection demand exceeding max_connections=100, (4) the N+1 query pattern holding connections longer, (5) the resulting connection exhaustion at product-db with 'too many clients' errors at 14:18, and (6) the cascade to checkout-api 5xx errors at 14:20. The agent provided exact timestamps, quantified the connection math (baseline 60\u219272, total 97-102 vs limit 100), identified the query duration increase (220ms vs 50ms), and traced the causal chain from deploy \u2192 connection saturation \u2192 refusal errors \u2192 checkout-api timeouts \u2192 5xx spike. This matches the ground truth's causal chain precisely, including the critical insight that checkout-api symptoms were caused by product-db exhaustion triggered by product-api changes."
+      },
+      "hypotheses": {
+        "per_hypothesis": [
+          {
+            "gt_id": "h1",
+            "expected": "confirm",
+            "agent_status": "confirmed",
+            "correct": true,
+            "statement": "product-db connection pool exhausted (connections hit max_connections), caused by the 14:08 product-api deploy"
+          },
+          {
+            "gt_id": "h2",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "payment-gateway outage is causing checkout failures"
+          },
+          {
+            "gt_id": "h3",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "ElastiCache (cache) eviction storm is the root cause"
+          },
+          {
+            "gt_id": "h4",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "general traffic surge overloaded checkout-api CPU"
+          }
+        ],
+        "confirm_accuracy": 1.0,
+        "red_herring_rejection": 0.0,
+        "overall": 0.25
+      },
+      "remediation": {
+        "score": 0.85,
+        "rationale": "The agent's remediation is largely sound and well-aligned with ground truth. IMMEDIATE actions correctly prioritize both rollback to v2.3.x (eliminating N+1 query) and increasing max_connections as a stopgap, matching ground truth's core recommendations. The agent properly identifies the N+1 query as the root cause and addresses it. SHORT-TERM improvements (optimizing the join, staggered rollouts, connection monitoring alerts) are all safe and valuable additions that enhance the ground truth solution. LONG-TERM items show good operational maturity. Minor deductions: (1) The agent suggests increasing max_connections first, whereas ground truth implies rollback is the primary fix with max_connections as stopgap\u2014ordering could be clearer about priority. (2) Ground truth mentions 'raise per-pod pool back and reduce replica count' as an alternative to rollback, which the agent doesn't explicitly address, though item #6 touches on pool sizing. (3) The specific max_connections target of 250+ is reasonable but not validated against actual need. Overall, the remediation addresses the true cause, includes no harmful steps, and adds valuable defensive measures beyond the ground truth."
+      },
+      "confidence": "high",
+      "confidence_calibrated": true,
+      "agent_confirmed_hypothesis_id": "h2",
+      "_agent_result": {
+        "conclusion": {
+          "root_cause": "Product-db max_connections hard limit of 100 was exceeded by the new connection topology introduced in product-api v2.4.0 deploy at 14:08Z. The deploy scaled replicas from 3\u21929 pods while reducing per-pod pool size from 20\u21928, increasing baseline demand from ~60 to 72 connections (9\u00d78). Combined with checkout-api (~15 connections) and other services (~10-15), total demand reached 97-102 connections, breaching the 100-connection ceiling. This was exacerbated by an N+1 query pattern in the new availability join path that held connections 4x longer (220ms vs 50ms baseline), preventing connection cycling from keeping pace. Database logs confirmed 'too many clients already' errors at 14:18:05Z and 14:22:11Z, with active_connections pinned at exactly 100 from 14:18Z onward. The exhausted connection pool cascaded 503 errors from product-api to checkout-api starting at 14:20:12Z, spiking 5xx rate from 0.4% to 14.2%.",
+          "confirmed_hypothesis_id": "h2",
+          "timeline": [
+            "14:08:00Z - product-api v2.4.0 deployed with replica scale 3\u21929 pods, per-pod pool reduction 20\u21928, and new availability join path with N+1 query pattern",
+            "14:08:10Z - All 9 product-api pods scaled up simultaneously (non-staggered), baseline connection demand increases from ~60 to 72",
+            "14:08:00Z-14:18:00Z - Database active_connections ramp from 36\u219263\u219288\u2192100 over 10 minutes as new pods establish pools and serve traffic",
+            "14:12:00Z - Slow query logs show N+1 pattern in availability join path averaging 220ms execution time (4x baseline 50ms), holding connections longer",
+            "14:17:40Z - Product-api connection pool exhaustion detected: pending=37, wait time escalating",
+            "14:18:00Z - Product-db active_connections saturates at max_connections=100 hard limit and remains pinned",
+            "14:18:05Z - First 'too many clients already' error logged in product-db",
+            "14:19:00Z - Product-db ConnectionLimit event confirms max_connections=100 ceiling hit",
+            "14:20:12Z - Product-api begins returning 503 errors to checkout-api due to connection pool exhaustion",
+            "14:21:30Z - Checkout-api marked Unhealthy, 5xx rate begins climbing",
+            "14:22:11Z - Additional 'too many clients already' errors in product-db logs",
+            "14:25:00Z - Connection pool wait time reaches 5000ms, pending queue depth sustained >30",
+            "14:28:00Z - Checkout-api 5xx rate peaks at 14.2% (from 0.4% baseline)"
+          ],
+          "remediation": "IMMEDIATE: (1) Increase product-db max_connections from 100 to 250+ to provide headroom for current topology (9 pods \u00d7 8 pool + other services + 50% buffer). (2) Rollback product-api to v2.3.x to eliminate N+1 query pattern and restore 50ms query baseline, allowing faster connection cycling. SHORT-TERM: (3) Optimize availability join path to use batch JOIN instead of per-item SELECT (N+1), reducing query time from 220ms to <80ms. (4) Implement staggered pod rollout (maxSurge=2-3, health check delays) to prevent thundering herd on future deploys. (5) Add connection pool monitoring alerts: warn at 80% utilization, critical at 90%. LONG-TERM: (6) Right-size per-pod connection pools based on actual concurrency needs (current 8 may be too low for request volume). (7) Implement connection pool circuit breakers to fail fast rather than queue indefinitely. (8) Review database connection capacity planning for future scale-ups.",
+          "confidence": "high"
+        },
+        "hypotheses": [
+          {
+            "id": "h1",
+            "status": "confirmed",
+            "statement": "Product-api v2.4.0 introduced an N+1 query pattern in the new availability join path that holds connections 4x longer (~200-220ms vs 50ms baseline), exhausting "
+          },
+          {
+            "id": "h2",
+            "status": "confirmed",
+            "statement": "Product-db max_connections hard limit (likely 100) is insufficient for the new topology after replica scale-up: 9 product-api pods \u00d7 8 pool = 72 base connection"
+          },
+          {
+            "id": "h3",
+            "status": "investigating",
+            "statement": "The replica scale-up from 3\u21929 pods triggered a thundering herd during product-api initialization at 14:08Z: all 9 pods simultaneously attempted to establish con"
+          },
+          {
+            "id": "h4",
+            "status": "rejected",
+            "statement": "RED HERRING: The per-pod pool reduction from 20\u21928 connections created a resource starvation scenario where individual product-api pods cannot handle their reque"
+          },
+          {
+            "id": "h5",
+            "status": "rejected",
+            "statement": "Connection leak in product-api v2.4.0: the new availability join path fails to properly release connections back to the pool under certain error conditions or e"
+          }
+        ]
+      },
+      "trace": {
+        "trace_id": "6ad9aca52baeacfd0da1c1eb5010b0ac",
+        "found_spans": 24,
+        "steps": [
+          {
+            "span": "llm.generate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 31407.9,
+            "input_tokens": 2859,
+            "output_tokens": 1496
+          },
+          {
+            "span": "a2a.delegate.telemetry",
+            "kind": "delegation",
+            "duration_ms": 15412.8
+          },
+          {
+            "span": "a2a.delegate.change",
+            "kind": "delegation",
+            "duration_ms": 16284.7
+          },
+          {
+            "span": "llm.evaluate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 15693.1,
+            "input_tokens": 2915,
+            "output_tokens": 936
+          },
+          {
+            "span": "llm.conclude",
+            "kind": "llm",
+            "duration_ms": 18215.9,
+            "input_tokens": 3962,
+            "output_tokens": 1003
+          },
+          {
+            "span": "investigation",
+            "kind": "investigation",
+            "duration_ms": 99075.6
+          },
+          {
+            "span": "a2a.handle.SRE Investigator Agent",
+            "kind": "a2a_server",
+            "duration_ms": 99083.0
+          }
+        ],
+        "delegation_count": 2,
+        "tokens": {
+          "input": 29208,
+          "output": 10305,
+          "total": 39513
+        },
+        "errors": [],
+        "root_total_ms": 99075.6
+      }
+    },
+    {
+      "scenario_id": "cache-stampede",
+      "tenant_id": "acme-retail",
+      "root_cause": {
+        "score": 1.0,
+        "identified_true_cause": true,
+        "rationale": "The agent correctly identifies the complete root cause mechanism: (1) cache-warmer batch job wrote ~12k catalog keys at 08:40 with identical 60-min TTL, (2) synchronized expiry at 09:40 caused cache stampede/thundering herd, (3) all product-api pods simultaneously queried product-db, (4) database load spike caused latency degradation. The agent accurately captures the trigger (synchronized TTL with no jitter), the mechanism (cache stampede \u2192 concurrent DB queries), the timing (08:40 write, 09:40 expiry), the scale (~11,840-12k keys), and the impact chain (connection pool exhaustion, read IOPS spike 14-16x, p95 latency 195ms\u21921,240ms). The agent also correctly rules out deployment or database fault as causes. This is a precise, complete identification of the true root cause with supporting quantitative evidence."
+      },
+      "hypotheses": {
+        "per_hypothesis": [
+          {
+            "gt_id": "h1",
+            "expected": "confirm",
+            "agent_status": "confirmed",
+            "correct": true,
+            "statement": "cache stampede from synchronized key expiry (no jitter) caused product-db read load and product-api latency"
+          },
+          {
+            "gt_id": "h2",
+            "expected": "reject",
+            "agent_status": "rejected",
+            "correct": true,
+            "statement": "a product-api deploy introduced a slow code path"
+          },
+          {
+            "gt_id": "h3",
+            "expected": "reject",
+            "agent_status": "rejected",
+            "correct": true,
+            "statement": "product-db is undersized / hardware fault"
+          },
+          {
+            "gt_id": "h4",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "traffic surge (flash sale) overwhelmed product-api"
+          }
+        ],
+        "confirm_accuracy": 1.0,
+        "red_herring_rejection": 0.6666666666666666,
+        "overall": 0.75
+      },
+      "remediation": {
+        "score": 0.95,
+        "rationale": "The agent's remediation is highly aligned with ground truth and demonstrates strong understanding of the thundering herd problem. MATCHES: (1) TTL jitter explicitly mentioned in both, (2) request coalescing/single-flight pattern included, (3) cache re-warming addressed via staggered batches and continuous background process, (4) monitoring/alarming covered via cache key access pattern monitoring. ENHANCEMENTS BEYOND GROUND-TRUTH: Connection pool tuning, circuit breaker, tiered caching strategy, and fail-fast mechanisms\u2014all sound practices for this scenario. MINOR GAP: Ground truth explicitly mentions 'soft-TTL refresh-ahead' which agent doesn't name directly, though probabilistic early expiration is conceptually similar. The agent's solution is comprehensive, safe, addresses root cause (synchronized expiry), and adds valuable defense-in-depth layers without harmful steps. Deducting 0.05 for not explicitly mentioning refresh-ahead pattern by name."
+      },
+      "confidence": "high",
+      "confidence_calibrated": true,
+      "agent_confirmed_hypothesis_id": "h1",
+      "_agent_result": {
+        "conclusion": {
+          "root_cause": "Cache stampede triggered by synchronized TTL expiry of ~11,840 catalog keys. The cache-warmer job at 08:40Z wrote approximately 12,000 catalog:* keys with a fixed 60-minute TTL and no jitter. All keys expired simultaneously at 09:40:02Z, causing a thundering herd where product-api pods concurrently queried product-db to rebuild cache entries. This exhausted database connection pools (active connections increased 91% from 32 to 61) and spiked read throughput 14-16x baseline (360 rps \u2192 5,100 rps), resulting in p95 latency degradation from 195ms to 1,240ms peak.",
+          "confirmed_hypothesis_id": "h1",
+          "timeline": [
+            "08:40:00Z - cache-warmer batch job writes ~12k catalog:* keys with fixed 60-min TTL (no jitter)",
+            "09:40:02Z - Mass expiry event: 11,840 catalog:* keys expire simultaneously, cache hit rate collapses from 93.9% to 31.2% (68.8% miss rate)",
+            "09:40-09:42Z - product-api latency spikes from 195ms to 760ms as pods experience cache misses",
+            "09:43:00Z - product-db read throughput spikes to 4,200 rps (14x baseline), product-api logs warn of 'concurrent fan-out across pods'",
+            "09:46:00Z - Peak impact: product-api p95 latency reaches 1,240ms, product-db reads hit 5,100 rps (16x baseline), active DB connections peak at 61 (91% increase)",
+            "09:46-10:05Z - Gradual recovery as cache repopulates: hit rate recovers to 92.6%, DB reads normalize to 520 rps, latency returns to 205ms"
+          ],
+          "remediation": "IMMEDIATE: (1) Add TTL jitter to cache-warmer job (e.g., base_ttl + random(0, 300s)) to prevent synchronized expiry. (2) Implement staggered cache warming batches with delays between writes. SHORT-TERM: (3) Add cache stampede protection via probabilistic early expiration or request coalescing (single-flight pattern) in product-api. (4) Increase product-db connection pool size and implement connection queuing with timeouts. (5) Add circuit breaker to product-api \u2192 product-db calls to fail fast during overload. LONG-TERM: (6) Implement cache warming as continuous background process rather than batch job. (7) Add cache key access pattern monitoring to detect future mass expiry risks. (8) Consider cache tier with longer TTLs for stable catalog data.",
+          "confidence": "high"
+        },
+        "hypotheses": [
+          {
+            "id": "h1",
+            "status": "confirmed",
+            "statement": "Cache stampede from synchronized TTL expiry (PRIOR MATCH): The cache-warmer job at 08:40Z wrote ~12k catalog:* keys with fixed 60-min TTL and no jitter, causing"
+          },
+          {
+            "id": "h2",
+            "status": "rejected",
+            "statement": "Web-storefront v3.1.0 deploy introduced latent regression causing product-api call amplification: The 'static assets only' deploy at 2026-02-11T20:00Z actually "
+          },
+          {
+            "id": "h3",
+            "status": "rejected",
+            "statement": "Cache-warmer job wrote malformed cache keys causing deserialization failures and cache-aside fallback storm: The cache-warmer batch at 08:40Z introduced a seria"
+          },
+          {
+            "id": "h4",
+            "status": "rejected",
+            "statement": "RED HERRING: Product-db query planner regression from routine maintenance or auto-vacuum: Between the cache-warmer run (08:40Z) and incident time (~09:40Z), pro"
+          },
+          {
+            "id": "h5",
+            "status": "rejected",
+            "statement": "Cache-warmer job triggered Redis memory pressure causing eviction of hot session/authentication keys: Writing ~12k new catalog:* keys at 08:40Z pushed Redis nea"
+          }
+        ]
+      },
+      "trace": {
+        "trace_id": "6ad9ad5001b84d7767e3551b6b35b027",
+        "found_spans": 24,
+        "steps": [
+          {
+            "span": "llm.generate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 39910.7,
+            "input_tokens": 2017,
+            "output_tokens": 1912
+          },
+          {
+            "span": "a2a.delegate.telemetry",
+            "kind": "delegation",
+            "duration_ms": 14674.6
+          },
+          {
+            "span": "a2a.delegate.change",
+            "kind": "delegation",
+            "duration_ms": 13899.2
+          },
+          {
+            "span": "llm.evaluate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 20453.7,
+            "input_tokens": 3170,
+            "output_tokens": 1034
+          },
+          {
+            "span": "llm.conclude",
+            "kind": "llm",
+            "duration_ms": 13234.6,
+            "input_tokens": 3980,
+            "output_tokens": 689
+          },
+          {
+            "span": "investigation",
+            "kind": "investigation",
+            "duration_ms": 103913.0
+          },
+          {
+            "span": "a2a.handle.SRE Investigator Agent",
+            "kind": "a2a_server",
+            "duration_ms": 103920.7
+          }
+        ],
+        "delegation_count": 2,
+        "tokens": {
+          "input": 27501,
+          "output": 10905,
+          "total": 38406
+        },
+        "errors": [],
+        "root_total_ms": 103913.0
+      }
+    },
+    {
+      "scenario_id": "bad-deploy-latency-regression",
+      "tenant_id": "acme-retail",
+      "root_cause": {
+        "score": 0.95,
+        "identified_true_cause": true,
+        "rationale": "The agent correctly identifies the true root cause with high precision: web-storefront v3.2.0 deployed at 16:28 introduced a synchronous product-api call on the homepage render path, causing the latency jump from ~400ms to ~1800ms. The agent accurately pinpoints the mechanism (blocking synchronous call replacing async/cached pattern), the timing (deploy at 16:28:00Z, symptoms at 16:30:00Z), and the causal relationship. The agent adds valuable technical detail about missing timeout/circuit-breaker configuration and thread blocking behavior that explains WHY the synchronous call caused such severe latency impact. The only minor gap is the agent specifies '/availability' endpoint while ground-truth doesn't specify which product-api endpoint, but this is additional detail rather than contradiction. The agent correctly rules out downstream service health issues and attributes the regression purely to the code change, matching ground-truth exactly. Deducting 0.05 for the slight over-specification of endpoint detail that cannot be verified against ground-truth."
+      },
+      "hypotheses": {
+        "per_hypothesis": [
+          {
+            "gt_id": "h1",
+            "expected": "confirm",
+            "agent_status": "confirmed",
+            "correct": true,
+            "statement": "web-storefront v3.2.0 deploy added a synchronous product-api call that regressed render latency"
+          },
+          {
+            "gt_id": "h2",
+            "expected": "reject",
+            "agent_status": "rejected",
+            "correct": true,
+            "statement": "product-api or product-db is slow and dragging web-storefront down"
+          },
+          {
+            "gt_id": "h3",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "CDN/edge degradation increased page load time"
+          },
+          {
+            "gt_id": "h4",
+            "expected": "reject",
+            "agent_status": "rejected",
+            "correct": true,
+            "statement": "traffic surge increased latency under load"
+          }
+        ],
+        "confirm_accuracy": 1.0,
+        "red_herring_rejection": 0.6666666666666666,
+        "overall": 0.75
+      },
+      "remediation": {
+        "score": 0.95,
+        "rationale": "The agent's remediation is highly sound and comprehensive. It correctly identifies the immediate action (rollback to v3.1.x) matching the ground truth. It goes beyond the ground truth by providing detailed short-term fixes including timeout configuration (200-300ms), circuit-breaker pattern (specific thresholds), and fallback mechanisms - all appropriate for addressing synchronous blocking calls. The agent recommends making the call resilient rather than just async/cached, which is equally valid and arguably more robust. The testing strategy with latency injection is excellent and safety-focused. The monitoring addition aligns with the ground truth's canary check concept but is more comprehensive. Minor deduction only because the ground truth specifically mentions making calls 'async/cached' which the agent doesn't explicitly state, though the timeout/circuit-breaker approach effectively achieves similar non-blocking behavior. No harmful steps present; all recommendations are production-safe and address the root cause of synchronous blocking calls causing latency."
+      },
+      "confidence": "high",
+      "confidence_calibrated": true,
+      "agent_confirmed_hypothesis_id": "h1",
+      "_agent_result": {
+        "conclusion": {
+          "root_cause": "Web-storefront v3.2.0 deployed at 16:28:00Z introduced a synchronous product-api /availability call on the homepage render path without proper timeout or circuit-breaker configuration. The blocking call caused request threads to wait for product-api responses without time bounds, amplifying end-to-end latency from 390ms to 1810ms (4.6x increase) despite product-api responding healthily in 69-72ms. The missing timeout configuration allowed each request to block for extended periods (1800ms observed), creating a thread starvation pattern visible as elevated render times while CPU remained at 46-52% (blocking I/O, not compute-bound). The issue manifested immediately after rollout completion at 16:28:10Z with symptoms detected at 16:30:00Z.",
+          "confirmed_hypothesis_id": "h1",
+          "timeline": [
+            "16:28:00Z - web-storefront v3.2.0 deployment initiated, introducing synchronous /availability call on render path",
+            "16:28:10Z - Kubernetes rollout completed, all 6 pods running v3.2.0 with new code path active",
+            "16:30:00Z - Latency spike detected: p95 jumped from 390ms to 1810ms (4.6x increase), LatencyStep alert fired",
+            "16:31:00Z - Web-storefront logs confirm 'render time elevated: homepage 1800ms, blocking on product-api call'",
+            "16:30-16:55Z - Sustained elevated latency at 1825-1840ms p95 while product-api remains healthy at 69-72ms p95",
+            "Throughout incident - CPU utilization 46-52% (not saturated), request rate stable 1240-1260 rps, product-db healthy at 8-9ms read latency"
+          ],
+          "remediation": "IMMEDIATE: Rollback web-storefront to v3.1.x to restore baseline latency <500ms. SHORT-TERM: Configure explicit timeout (recommend 200-300ms) and circuit-breaker (failure threshold 50%, 10s half-open retry) for product-api /availability calls in v3.2.x code. Add fallback behavior (cached data or graceful degradation) when availability service is slow/unavailable. TESTING: Load test v3.2.1 with product-api latency injection (500ms, 2000ms scenarios) to verify timeout enforcement and circuit-breaker activation before redeployment. MONITORING: Add render-path duration breakdown metrics to detect blocking calls in pre-production environments.",
+          "confidence": "high"
+        },
+        "hypotheses": [
+          {
+            "id": "h1",
+            "status": "confirmed",
+            "statement": "Web-storefront v3.2.0 synchronous /availability call lacks timeout/circuit-breaker configuration, causing request blocking and latency amplification (PRIOR MATC"
+          },
+          {
+            "id": "h2",
+            "status": "rejected",
+            "statement": "Product-api /availability endpoint triggers N+1 query pattern or inefficient database join not caught in testing. Each storefront page calls /availability once,"
+          },
+          {
+            "id": "h3",
+            "status": "rejected",
+            "statement": "Cache stampede on product-api availability cache keys (PRIOR PATTERN score=0.49). A batch initialization or cache-warmer wrote availability cache keys with sync"
+          },
+          {
+            "id": "h4",
+            "status": "rejected",
+            "statement": "RED HERRING: Product-db routine parameter review at 11:00Z inadvertently changed query planner setting (random_page_cost, work_mem, join algorithm) causing /ava"
+          },
+          {
+            "id": "h5",
+            "status": "rejected",
+            "statement": "Product-api /availability endpoint experiences sudden traffic amplification beyond capacity due to web-storefront rendering more pages per request or calling /a"
+          }
+        ]
+      },
+      "trace": {
+        "trace_id": "6ad9ae3745425f4348c1db9957a66b95",
+        "found_spans": 21,
+        "steps": [
+          {
+            "span": "a2a.delegate.telemetry",
+            "kind": "delegation",
+            "duration_ms": 11705.1
+          },
+          {
+            "span": "a2a.delegate.change",
+            "kind": "delegation",
+            "duration_ms": 19080.5
+          },
+          {
+            "span": "llm.evaluate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 17423.5,
+            "input_tokens": 2611,
+            "output_tokens": 831
+          },
+          {
+            "span": "llm.conclude",
+            "kind": "llm",
+            "duration_ms": 13011.8,
+            "input_tokens": 3521,
+            "output_tokens": 637
+          },
+          {
+            "span": "investigation",
+            "kind": "investigation",
+            "duration_ms": 90489.6
+          },
+          {
+            "span": "a2a.handle.SRE Investigator Agent",
+            "kind": "a2a_server",
+            "duration_ms": 90495.1
+          }
+        ],
+        "delegation_count": 2,
+        "tokens": {
+          "input": 18396,
+          "output": 4404,
+          "total": 22800
+        },
+        "errors": [],
+        "root_total_ms": 90489.6
+      }
+    },
+    {
+      "tenant_id": "globex-fintech",
+      "scenario_id": "pod-crashloop-bad-config",
+      "error": "The read operation timed out"
+    },
+    {
+      "scenario_id": "noisy-neighbor-latency",
+      "tenant_id": "globex-fintech",
+      "root_cause": {
+        "score": 1.0,
+        "identified_true_cause": true,
+        "rationale": "The agent's root cause conclusion precisely matches the ground truth in all critical dimensions: (1) Correctly identifies ledger-reconciler batch job as the trigger, including exact timing (13:40), job ID, and node (ip-10-2-3-44); (2) Accurately diagnoses the mechanism as CPU saturation due to missing CPU limits (3.6-3.8 cores consumed, node CPU 44%\u219298%); (3) Correctly identifies the victim (auth-svc pods 77 and 81 co-located on same node) and the failure mode (CPU throttling with specific metrics: throttled_periods 2\u2192910); (4) Properly isolates the blast radius (only pods on ip-10-2-3-44 affected, other nodes healthy); (5) Validates causality with recovery timing (job completion at 14:12Z, latency recovery within 2 minutes); (6) Correctly excludes auth-svc code, auth-db, and token-cache as causes. The agent demonstrates complete understanding of the noisy-neighbor CPU contention scenario with supporting quantitative evidence matching the ground truth causal chain."
+      },
+      "hypotheses": {
+        "per_hypothesis": [
+          {
+            "gt_id": "h1",
+            "expected": "confirm",
+            "agent_status": "confirmed",
+            "correct": true,
+            "statement": "noisy-neighbor CPU contention on the shared node (ledger-reconciler batch) is throttling auth-svc and raising its latenc"
+          },
+          {
+            "gt_id": "h2",
+            "expected": "reject",
+            "agent_status": "rejected",
+            "correct": true,
+            "statement": "auth-db (Aurora) is slow and causing auth-svc latency"
+          },
+          {
+            "gt_id": "h3",
+            "expected": "reject",
+            "agent_status": "rejected",
+            "correct": true,
+            "statement": "token-cache (Redis) degradation is the cause"
+          },
+          {
+            "gt_id": "h4",
+            "expected": "reject",
+            "agent_status": "rejected",
+            "correct": true,
+            "statement": "an auth-svc deploy introduced a regression"
+          },
+          {
+            "gt_id": "h5",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "a traffic surge to auth-svc caused the latency"
+          }
+        ],
+        "confirm_accuracy": 1.0,
+        "red_herring_rejection": 0.75,
+        "overall": 0.8
+      },
+      "remediation": {
+        "score": 0.95,
+        "rationale": "The agent's remediation is highly aligned with the ground truth. Both identify the core issues: (1) adding CPU limits/requests to ledger-reconciler, (2) workload separation via node affinity/taints/dedicated node pools, and (3) implementing CPU monitoring/alerting. The agent provides a well-structured immediate/short/long-term plan that addresses the root cause (unbounded batch job resource consumption) and prevents recurrence. Minor deduction: the agent doesn't explicitly mention evicting/rescheduling the current problematic job instance (immediate incident response) and doesn't specifically call out node-level CPU saturation alarms (only mentions CPU throttling alerts for services). However, the validation step to review all batch jobs for missing limits is a valuable addition. Overall, the remediation is sound, safe, and comprehensive."
+      },
+      "confidence": "high",
+      "confidence_calibrated": true,
+      "agent_confirmed_hypothesis_id": "h1",
+      "_agent_result": {
+        "conclusion": {
+          "root_cause": "Ledger-reconciler CronJob (job/9931) launched at 13:40Z without CPU limits on node ip-10-2-3-44, which also hosted auth-svc pods (auth-svc-77, auth-svc-81). The batch job consumed 3.6-3.8 CPU cores, saturating the node from 44% to 98% CPU utilization within 2 minutes (13:42Z). This CPU contention starved co-located auth-svc pods of CPU cycles, causing severe CPU throttling (throttled_periods spiked from 2 to 910) and latency degradation isolated to ip-10-2-3-44 (p95 latency increased from 130ms to 1300ms). Auth-svc pods on other nodes remained healthy (125-132ms latency) throughout the incident. When the job completed at 14:12Z, node CPU normalized to 46% and auth-svc latency recovered to 150ms within 2 minutes, confirming the causal relationship.",
+          "confirmed_hypothesis_id": "h1",
+          "timeline": [
+            "13:40Z: ledger-reconciler CronJob (job/9931) scheduled to node ip-10-2-3-44 without CPU limits",
+            "13:42Z: Node ip-10-2-3-44 CPU utilization spikes from 44% to 98%; ledger-reconciler consuming 3.6-3.8 cores",
+            "13:45Z: Auth-svc pods on ip-10-2-3-44 show CPU throttling spike (480 throttled_periods); p95 latency jumps to 820ms on affected pods while other nodes remain at 125-132ms",
+            "13:52Z: CPU throttling peaks at 910 throttled_periods; p95 latency reaches 1300ms on ip-10-2-3-44 pods",
+            "14:10Z: Auth-svc latency begins recovery to 150ms on ip-10-2-3-44 as job nears completion",
+            "14:12Z: Ledger-reconciler job completes; node CPU drops to 46%; CPU throttling returns to baseline (5 throttled_periods); latency fully recovers"
+          ],
+          "remediation": "IMMEDIATE: Add CPU limits to ledger-reconciler CronJob spec (e.g., limits.cpu: 1000m-2000m) to prevent future node saturation. SHORT-TERM: Apply node affinity or taints/tolerations to separate batch workloads from latency-sensitive services like auth-svc. LONG-TERM: Implement PodDisruptionBudgets and resource quotas for batch jobs; enable CPU throttling alerts for production services; consider dedicated node pools for batch vs. serving workloads. VALIDATION: Review all CronJobs and batch Jobs for missing resource limits.",
+          "confidence": "high"
+        },
+        "hypotheses": [
+          {
+            "id": "h1",
+            "status": "confirmed",
+            "statement": "Ledger-reconciler CronJob (job/9931) launched at 13:40Z without CPU limits on node ip-10-2-3-44, which also hosts auth-svc pods. The batch job is CPU-saturating"
+          },
+          {
+            "id": "h2",
+            "status": "rejected",
+            "statement": "Auth-svc v4.6.0 (deployed 3 days ago on Feb 15) introduced a latent performance regression (memory leak, inefficient algorithm, connection pool exhaustion) that"
+          },
+          {
+            "id": "h3",
+            "status": "rejected",
+            "statement": "Downstream dependency failure: auth-svc calls an external identity provider, token validation service, or database that began experiencing latency/failures at 1"
+          },
+          {
+            "id": "h4",
+            "status": "rejected",
+            "statement": "Network-level issue on node ip-10-2-3-44: ledger-reconciler job triggers network saturation (conntrack table exhaustion, network buffer overflow, NIC saturation"
+          },
+          {
+            "id": "h5",
+            "status": "rejected",
+            "statement": "RED HERRING: Ledger-reconciler job at 13:40Z coincidentally correlates with an unrelated auth-svc configuration issue\u2014a ConfigMap or Secret update (not captured"
+          }
+        ]
+      },
+      "trace": {
+        "trace_id": "6ad9b73627dbb6844b25cfdb74e02465",
+        "found_spans": 24,
+        "steps": [
+          {
+            "span": "llm.generate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 26329.0,
+            "input_tokens": 2172,
+            "output_tokens": 1384
+          },
+          {
+            "span": "a2a.delegate.telemetry",
+            "kind": "delegation",
+            "duration_ms": 13170.1
+          },
+          {
+            "span": "a2a.delegate.change",
+            "kind": "delegation",
+            "duration_ms": 15468.9
+          },
+          {
+            "span": "llm.evaluate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 15810.9,
+            "input_tokens": 2751,
+            "output_tokens": 827
+          },
+          {
+            "span": "llm.conclude",
+            "kind": "llm",
+            "duration_ms": 11514.1,
+            "input_tokens": 3611,
+            "output_tokens": 709
+          },
+          {
+            "span": "investigation",
+            "kind": "investigation",
+            "duration_ms": 84501.0
+          },
+          {
+            "span": "a2a.handle.SRE Investigator Agent",
+            "kind": "a2a_server",
+            "duration_ms": 84509.6
+          }
+        ],
+        "delegation_count": 2,
+        "tokens": {
+          "input": 25602,
+          "output": 8760,
+          "total": 34362
+        },
+        "errors": [],
+        "root_total_ms": 84501.0
+      }
+    },
+    {
+      "scenario_id": "dns-resolution-failure",
+      "tenant_id": "globex-fintech",
+      "root_cause": {
+        "score": 1.0,
+        "identified_true_cause": true,
+        "rationale": "The agent correctly identified the true root cause with high accuracy. Both ground truth and agent conclusion pinpoint: (1) the CoreDNS ConfigMap change at 22:05 as the trigger, (2) the specific mechanism of switching to a single upstream resolver eliminating redundancy, (3) the consequence of DNS resolution failures for api.processor.example, and (4) the resulting payment-svc failures due to name resolution errors (not processor endpoint issues). The agent even identified the specific change ID (chg/coredns/341) and upstream resolver (10.2.0.2). While the ground truth also mentions reduced cache TTL as a contributing factor and the agent focuses on the single-point-of-failure aspect, the core mechanism and trigger are identical. The agent correctly distinguished that the processor endpoint itself was healthy and the fault was in cluster DNS resolution, matching the ground truth's emphasis that this was a DNS resolution problem, not an HTTP/processor problem."
+      },
+      "hypotheses": {
+        "per_hypothesis": [
+          {
+            "gt_id": "h1",
+            "expected": "confirm",
+            "agent_status": "confirmed",
+            "correct": true,
+            "statement": "cluster DNS (CoreDNS) resolution failures to the external payment-processor, caused by the 22:05 CoreDNS config change"
+          },
+          {
+            "gt_id": "h2",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "the external payment-processor is down / returning errors"
+          },
+          {
+            "gt_id": "h3",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "payments-svc pods are crashlooping again (like a prior incident)"
+          },
+          {
+            "gt_id": "h4",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "Kafka backpressure is causing payments-svc errors"
+          },
+          {
+            "gt_id": "h5",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "auth-svc failures are cascading into payments-svc"
+          }
+        ],
+        "confirm_accuracy": 1.0,
+        "red_herring_rejection": 0.0,
+        "overall": 0.2
+      },
+      "remediation": {
+        "score": 0.85,
+        "rationale": "The agent's remediation is largely sound and addresses the core issue. IMMEDIATE: Correctly reverts the CoreDNS ConfigMap to restore upstream redundancy, directly fixing the single-point-of-failure that caused the outage. SHORT-TERM: Appropriately investigates the failed upstream resolver. LONG-TERM: (1) Enforcing multi-upstream configuration prevents recurrence, (2) Pre-deployment validation is a strong preventive control, (3) Upstream connectivity alerting is valuable, (4) Correctly identifies cache TTL reduction as a potential amplifying factor, (5) Enhanced monitoring improves observability. GAPS vs GROUND-TRUTH: Missing NodeLocal DNSCache deployment (architectural improvement for resilience), missing DNS resolution success-rate alarm (proactive detection), and missing synthetic check for processor hostname (end-to-end validation). The agent focuses heavily on upstream resolver health but doesn't address client-side caching improvements. However, the core fix is correct, safe, and the preventive measures are solid. Deducting 0.15 for missing the architectural improvements and specific monitoring gaps identified in ground truth."
+      },
+      "confidence": "high",
+      "confidence_calibrated": true,
+      "agent_confirmed_hypothesis_id": "h1",
+      "_agent_result": {
+        "conclusion": {
+          "root_cause": "CoreDNS configuration change at 22:05Z (chg/coredns/341) eliminated upstream resolver redundancy by switching to a single upstream resolver (10.2.0.2), creating a single point of failure. When this resolver became unreachable or timed out, all external DNS resolution failed, causing payments-svc to be unable to resolve api.processor.example and resulting in 7.8-8.5% payment processing failures.",
+          "confirmed_hypothesis_id": "h1",
+          "timeline": [
+            "22:05:00Z - CoreDNS Corefile configuration change deployed (chg/coredns/341): switched from multiple upstream resolvers to single upstream 10.2.0.2, reduced cache TTL from 30s to 5s",
+            "22:05:05Z - CoreDNS ConfigReloaded event confirms new configuration applied",
+            "22:05Z - CoreDNS SERVFAIL rate spikes from 0% to 12.5-14.0% as single upstream resolver 10.2.0.2 becomes unreachable/times out",
+            "22:05Z - Payments-svc DNS resolution error rate jumps from 0% to 9.1-16.4%",
+            "22:10:30Z - Payments-svc logs show SERVFAIL errors for api.processor.example",
+            "22:11:00Z - CoreDNS logs explicitly show 'upstream resolver timeout (single upstream configured)' for 10.2.0.2",
+            "22:11:00Z - Platform observability detects ResolverTimeout event",
+            "22:05Z-22:25Z - Payments-svc overall error rate elevated to 7.8-8.5% (from baseline 0.3-0.4%) due to DNS resolution failures preventing payment processor API calls",
+            "22:33:00Z - Corefile reverted to previous multi-upstream configuration",
+            "22:33Z - Recovery confirmed: CoreDNS SERVFAIL rate drops to 0.8%, payments-svc DNS errors drop to 1.0%, overall error rate recovers to 1.2%"
+          ],
+          "remediation": "Immediate: Corefile was successfully reverted at 22:33Z, restoring upstream resolver redundancy and resolving the incident. Short-term: Verify health and reachability of upstream resolver 10.2.0.2 - investigate why it became unreachable/timed out. Long-term: (1) Implement mandatory multi-upstream resolver configuration in CoreDNS to prevent single points of failure, (2) Add pre-deployment validation requiring at least 2 healthy upstream resolvers, (3) Establish alerting on upstream resolver connectivity before deploying DNS configuration changes, (4) Review cache TTL reduction from 30s to 5s - assess if 6x query rate increase contributed to resolver overload, (5) Add CoreDNS upstream query rate and resolver response time metrics to monitoring dashboards.",
+          "confidence": "high"
+        },
+        "hypotheses": [
+          {
+            "id": "h1",
+            "status": "confirmed",
+            "statement": "CoreDNS upstream resolver 10.2.0.2 (configured as single upstream at 22:05Z) is unreachable, down, or misconfigured, causing DNS resolution failures for externa"
+          },
+          {
+            "id": "h2",
+            "status": "investigating",
+            "statement": "The lowered CoreDNS cache TTL (30s->5s) combined with single upstream resolver created a query storm that overwhelmed resolver 10.2.0.2 or exhausted connection "
+          },
+          {
+            "id": "h3",
+            "status": "rejected",
+            "statement": "External domain api.processor.example has a DNS infrastructure failure (authoritative nameserver outage, expired domain registration, DNS record deletion, or DN"
+          },
+          {
+            "id": "h4",
+            "status": "rejected",
+            "statement": "RED HERRING: Network policy, firewall rule, or security group change deployed around 22:05Z is blocking CoreDNS pods from reaching upstream resolver 10.2.0.2 on"
+          },
+          {
+            "id": "h5",
+            "status": "rejected",
+            "statement": "Upstream resolver 10.2.0.2 has a configuration issue specifically affecting external domain resolution (missing forwarders, broken recursion, firewall blocking "
+          }
+        ]
+      },
+      "trace": {
+        "trace_id": "6ad9b80507fabb0026abab1a4a33aff5",
+        "found_spans": 24,
+        "steps": [
+          {
+            "span": "llm.generate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 28572.1,
+            "input_tokens": 2484,
+            "output_tokens": 1449
+          },
+          {
+            "span": "a2a.delegate.telemetry",
+            "kind": "delegation",
+            "duration_ms": 11728.1
+          },
+          {
+            "span": "a2a.delegate.change",
+            "kind": "delegation",
+            "duration_ms": 15654.1
+          },
+          {
+            "span": "llm.evaluate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 18663.7,
+            "input_tokens": 2786,
+            "output_tokens": 711
+          },
+          {
+            "span": "llm.conclude",
+            "kind": "llm",
+            "duration_ms": 12575.8,
+            "input_tokens": 3573,
+            "output_tokens": 726
+          },
+          {
+            "span": "investigation",
+            "kind": "investigation",
+            "duration_ms": 89074.7
+          },
+          {
+            "span": "a2a.handle.SRE Investigator Agent",
+            "kind": "a2a_server",
+            "duration_ms": 89080.1
+          }
+        ],
+        "delegation_count": 2,
+        "tokens": {
+          "input": 26529,
+          "output": 8658,
+          "total": 35187
+        },
+        "errors": [],
+        "root_total_ms": 89074.7
+      }
+    }
+  ]
+}

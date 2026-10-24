@@ -24,6 +24,7 @@ research (AWS blogs, webinars, workshops, production examples) and industry stan
 AI-PLATFORM/
 ├── README.md                  # this file
 ├── well-architected/          # the 6-pillar lens applied to agentic AI on AgentCore
+├── security-framework/        # cross-cutting AI security lens (use cases × layers × phases)
 ├── principles/                # component-agnostic design principles
 ├── reference-architecture/    # the generic target architecture (component composition)
 ├── standards/                 # conventions: naming, tagging, IaC, versioning

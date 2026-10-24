@@ -1,0 +1,9 @@
+{
+  "runs": [
+    {
+      "tenant_id": "acme-retail",
+      "scenario_id": "rds-connection-exhaustion",
+      "error": "Client error '424 Failed Dependency' for url 'https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/arn%3Aaws%3Abedrock-agentcore%3Aus-east-1%3A001961766007%3Aruntime%2Fsre_agentic_dev_supervisor-dSf6vD9ngf/invocations?qualifier=DEFAULT'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/424"
+    }
+  ]
+}

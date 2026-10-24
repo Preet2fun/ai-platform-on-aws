@@ -1,0 +1,63 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  SRE Agentic System - P7 CP3: execution role for AgentCore Online Evaluation. The online-eval
+  config (always-on, reference-free LLM-as-judge on live traces) is created via CLI referencing
+  this role. Role name is prefixed AgentCoreEvaluationRole so the IAM user's PassRole condition
+  (iam:PassedToService=bedrock-agentcore.amazonaws.com) permits passing it.
+
+Parameters:
+  ProjectName: { Type: String, Default: sre-agentic }
+  EnvName:     { Type: String, Default: dev }
+
+Resources:
+  EvalExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "AgentCoreEvaluationRole-${ProjectName}-${EnvName}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: TrustPolicyStatement
+            Effect: Allow
+            Principal: { Service: bedrock-agentcore.amazonaws.com }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref "AWS::AccountId"
+                aws:ResourceAccount: !Ref "AWS::AccountId"
+              ArnLike:
+                aws:SourceArn:
+                  - !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:evaluator/*"
+                  - !Sub "arn:aws:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:online-evaluation-config/*"
+      Policies:
+        - PolicyName: eval-execution
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CloudWatchLogRead
+                Effect: Allow
+                Action: [ "logs:DescribeLogGroups", "logs:GetQueryResults", "logs:StartQuery" ]
+                Resource: "*"
+              - Sid: CloudWatchLogWrite
+                Effect: Allow
+                Action: [ "logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents" ]
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/evaluations/*"
+              - Sid: CloudWatchIndexPolicy
+                Effect: Allow
+                Action: [ "logs:DescribeIndexPolicies", "logs:PutIndexPolicy" ]
+                Resource:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:aws/spans"
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:aws/spans:*"
+                  # our runtimes use unified per-agent span destinations:
+                  - !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*"
+              - Sid: BedrockInvoke
+                Effect: Allow
+                Action: [ "bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream" ]
+                Resource:
+                  - !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/*"
+                  - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*"
+      Tags: [ { Key: component, Value: evaluations }, { Key: env, Value: !Ref EnvName }, { Key: usecase, Value: sre } ]
+
+Outputs:
+  EvalExecutionRoleArn:
+    Value: !GetAtt EvalExecutionRole.Arn

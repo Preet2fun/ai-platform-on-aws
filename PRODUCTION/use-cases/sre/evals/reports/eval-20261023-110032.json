@@ -1,0 +1,164 @@
+{
+  "runs": [
+    {
+      "scenario_id": "noisy-neighbor-latency",
+      "tenant_id": "globex-fintech",
+      "root_cause": {
+        "score": 1.0,
+        "identified_true_cause": true,
+        "rationale": "The agent's root cause conclusion precisely matches the ground truth in all critical dimensions: (1) Correctly identifies ledger-reconciler as the triggering workload with exact timing (13:40); (2) Accurately pinpoints the mechanism - no CPU limits leading to node CPU saturation (97-99% vs ground truth ~98%); (3) Correctly identifies the specific node (ip-10-2-3-44) and affected auth-svc pods; (4) Accurately describes the causal mechanism - CPU throttling of co-located auth-svc pods causing latency spikes; (5) Correctly distinguishes that only pods on the affected node experienced issues while others remained healthy; (6) Provides specific quantitative evidence (3.6-3.8 cores consumed, 240-455x throttling increase, 820-1300ms p95 latency); (7) Correctly identifies resolution timing (14:12Z when job completed). The agent explicitly rules out auth-svc code, auth-db, and dependencies as causes, correctly attributing the issue to noisy neighbor CPU contention. This is a textbook-perfect root cause analysis that identifies the true trigger, mechanism, and scope with supporting evidence."
+      },
+      "hypotheses": {
+        "per_hypothesis": [
+          {
+            "gt_id": "h1",
+            "expected": "confirm",
+            "agent_status": "confirmed",
+            "correct": true,
+            "statement": "noisy-neighbor CPU contention on the shared node (ledger-reconciler batch) is throttling auth-svc and raising its latenc"
+          },
+          {
+            "gt_id": "h2",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "auth-db (Aurora) is slow and causing auth-svc latency"
+          },
+          {
+            "gt_id": "h3",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "token-cache (Redis) degradation is the cause"
+          },
+          {
+            "gt_id": "h4",
+            "expected": "reject",
+            "agent_status": "rejected",
+            "correct": true,
+            "statement": "an auth-svc deploy introduced a regression"
+          },
+          {
+            "gt_id": "h5",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "a traffic surge to auth-svc caused the latency"
+          }
+        ],
+        "confirm_accuracy": 1.0,
+        "red_herring_rejection": 0.25,
+        "overall": 0.4
+      },
+      "remediation": {
+        "score": 0.95,
+        "rationale": "The agent's remediation is highly aligned with the ground truth and demonstrates comprehensive understanding of the root cause. Both identify the core issue: batch job CPU saturation affecting latency-sensitive services. Key alignments: (1) Both recommend evicting/terminating the problematic batch job immediately, (2) Both prescribe CPU limits/requests for batch workloads, (3) Both suggest dedicated node pools for workload isolation, (4) Both call for node-level CPU monitoring/alerting, (5) Agent adds pod anti-affinity as an alternative isolation mechanism (sound approach). The agent provides more granular phasing (immediate/short/long-term) and includes additional defensive measures like cluster-wide policy enforcement and job optimization. Minor deduction: The agent doesn't explicitly mention taints as an isolation mechanism (only anti-affinity and node pools), though this is a minor omission given the comprehensive coverage. The remediation is safe, addresses the true cause, and includes no harmful steps. The agent actually exceeds the ground truth by adding verification steps and policy recommendations."
+      },
+      "confidence": "high",
+      "confidence_calibrated": true,
+      "agent_confirmed_hypothesis_id": "h1",
+      "_agent_result": {
+        "conclusion": {
+          "root_cause": "Ledger-reconciler CronJob (job/9931) launched at 13:40Z on node ip-10-2-3-44 without CPU limits, consuming 3.6-3.8 CPU cores and saturating the shared node to 97-99% CPU utilization. This starved co-located auth-svc pods (auth-svc-77, auth-svc-81) of CPU cycles, causing severe CPU throttling (240-455x baseline throttled periods) and isolated latency spikes (820-1300ms p95) on that node only. Auth-svc pods on other nodes remained healthy (125-132ms p95). All symptoms resolved at 14:12Z when the job completed and node CPU returned to 46% baseline.",
+          "confirmed_hypothesis_id": "h1",
+          "timeline": [
+            "13:40:00Z - Ledger-reconciler CronJob/9931 scheduled on node ip-10-2-3-44 without CPU limits",
+            "13:40:00Z - Node ip-10-2-3-44 CPU begins climbing from 44% baseline",
+            "13:42:00Z - Node CPU reaches 98%; ledger-reconciler process consuming 3.6 CPU cores",
+            "13:42:00Z - Node ip-10-2-3-44 CPU pressure event triggered",
+            "13:45:00Z - Auth-svc pods 77/81 on ip-10-2-3-44 experience CPU throttling (480 throttled periods, 240x baseline)",
+            "13:45:00Z - Auth-svc p95 latency on ip-10-2-3-44 pods spikes to 820ms (vs 125-132ms on healthy nodes)",
+            "13:52:00Z - Peak impact: 910 throttled periods, 1300ms p95 latency on affected pods; node CPU sustained at 97-99%",
+            "14:10:00Z - Early recovery signals: throttling drops to 5 periods, latency improves to 150ms",
+            "14:12:00Z - Ledger-reconciler job completes (CPU drops to 0.0 cores); node CPU returns to 46%",
+            "14:15:00Z - Auth-svc aggregate latency fully recovered to 140ms; incident resolved"
+          ],
+          "remediation": "IMMEDIATE: (1) Terminate or deprioritize ledger-reconciler CronJob/9931 if still running. (2) Verify auth-svc latency has normalized across all nodes. SHORT-TERM: (3) Add CPU limits (e.g., 2 cores) and requests to ledger-reconciler CronJob manifest to prevent future node saturation. (4) Apply pod anti-affinity rules to prevent ledger-reconciler from co-locating with latency-sensitive auth-svc pods. (5) Enable CPU quota enforcement and consider node resource reservations. LONG-TERM: (6) Implement cluster-wide policy requiring CPU/memory limits on all batch jobs. (7) Add node CPU utilization alerting (threshold: >80% sustained for >3 minutes). (8) Review and optimize ledger-reconciler job to reduce CPU consumption or split into smaller tasks. (9) Consider dedicated node pools for batch workloads vs. latency-sensitive services.",
+          "confidence": "high"
+        },
+        "hypotheses": [
+          {
+            "id": "h1",
+            "status": "confirmed",
+            "statement": "Ledger-reconciler CronJob (job/9931) launched at 13:40Z without CPU limits on node ip-10-2-3-44, CPU-saturating the shared node and starving co-located auth-svc"
+          },
+          {
+            "id": "h2",
+            "status": "rejected",
+            "statement": "Auth-svc v4.6.0 (deployed 3 days ago) introduced a latent memory leak or GC pressure issue that has gradually accumulated over 72 hours, now causing heap exhaus"
+          },
+          {
+            "id": "h3",
+            "status": "rejected",
+            "statement": "Downstream dependency degradation: auth-svc calls an external service (identity provider API, token validation service, database connection pool, or Redis cache"
+          },
+          {
+            "id": "h4",
+            "status": "rejected",
+            "statement": "Network-level issue on node ip-10-2-3-44: ledger-reconciler job triggers network saturation (conntrack table exhaustion, TCP buffer overflow, NIC bandwidth satu"
+          },
+          {
+            "id": "h5",
+            "status": "rejected",
+            "statement": "RED HERRING: Ledger-reconciler job coincidentally correlates with an unrelated auth-svc configuration change\u2014a silent ConfigMap/Secret update, feature flag flip"
+          }
+        ]
+      },
+      "trace": {
+        "trace_id": "6adaf0575cb2d2071be6e37e27a85532",
+        "found_spans": 24,
+        "steps": [
+          {
+            "span": "llm.generate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 28990.3,
+            "input_tokens": 2239,
+            "output_tokens": 1488
+          },
+          {
+            "span": "a2a.delegate.telemetry",
+            "kind": "delegation",
+            "duration_ms": 14197.2
+          },
+          {
+            "span": "a2a.delegate.change",
+            "kind": "delegation",
+            "duration_ms": 20547.9
+          },
+          {
+            "span": "llm.evaluate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 17955.6,
+            "input_tokens": 3049,
+            "output_tokens": 1051
+          },
+          {
+            "span": "llm.conclude",
+            "kind": "llm",
+            "duration_ms": 16030.4,
+            "input_tokens": 4218,
+            "output_tokens": 813
+          },
+          {
+            "span": "investigation",
+            "kind": "investigation",
+            "duration_ms": 99682.9
+          },
+          {
+            "span": "a2a.handle.SRE Investigator Agent",
+            "kind": "a2a_server",
+            "duration_ms": 99692.7
+          }
+        ],
+        "delegation_count": 2,
+        "tokens": {
+          "input": 28518,
+          "output": 10056,
+          "total": 38574
+        },
+        "errors": [],
+        "root_total_ms": 99682.9
+      }
+    }
+  ]
+}

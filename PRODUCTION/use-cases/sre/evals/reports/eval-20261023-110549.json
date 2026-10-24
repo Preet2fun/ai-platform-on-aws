@@ -1,0 +1,162 @@
+{
+  "runs": [
+    {
+      "scenario_id": "dns-resolution-failure",
+      "tenant_id": "globex-fintech",
+      "root_cause": {
+        "score": 1.0,
+        "identified_true_cause": true,
+        "rationale": "The agent correctly identifies the true root cause with high precision: (1) ConfigMap change at 22:05 that switched CoreDNS to a single upstream resolver (10.2.0.2) and reduced cache TTL from 30s to 5s; (2) this created a single point of failure that was exposed when the resolver became unreachable/timed out; (3) DNS resolution failures for api.processor.example resulted in SERVFAIL errors; (4) these DNS failures cascaded to payment service errors with 'name resolution failed' messages. The agent accurately captures both the trigger (ConfigMap change) and the mechanism (single resolver + reduced TTL \u2192 DNS resolution failures \u2192 payment errors). The agent also correctly notes the 6-minute delay and hypothesizes that increased query rate from TTL reduction may have contributed to overwhelming the resolver, which aligns with the ground truth's 'intermittent failures under load.' The causal chain matches: config change \u2192 DNS resolution failures \u2192 payment service errors. The agent distinguishes that this is a DNS resolution problem, not an HTTP error from the processor itself, matching the ground truth's emphasis that 'the processor endpoint itself is up.' Minor speculation about resolver resource exhaustion doesn't detract from the core accuracy."
+      },
+      "hypotheses": {
+        "per_hypothesis": [
+          {
+            "gt_id": "h1",
+            "expected": "confirm",
+            "agent_status": "confirmed",
+            "correct": true,
+            "statement": "cluster DNS (CoreDNS) resolution failures to the external payment-processor, caused by the 22:05 CoreDNS config change"
+          },
+          {
+            "gt_id": "h2",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "the external payment-processor is down / returning errors"
+          },
+          {
+            "gt_id": "h3",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "payments-svc pods are crashlooping again (like a prior incident)"
+          },
+          {
+            "gt_id": "h4",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "Kafka backpressure is causing payments-svc errors"
+          },
+          {
+            "gt_id": "h5",
+            "expected": "reject",
+            "agent_status": "none",
+            "correct": false,
+            "statement": "auth-svc failures are cascading into payments-svc"
+          }
+        ],
+        "confirm_accuracy": 1.0,
+        "red_herring_rejection": 0.0,
+        "overall": 0.2
+      },
+      "remediation": {
+        "score": 0.75,
+        "rationale": "The agent correctly identifies and executes the primary fix: reverting the CoreDNS ConfigMap to restore multiple upstreams. This addresses the root cause (single upstream resolver creating SPOF). The agent also appropriately recommends investigating upstream resolver health and implementing safeguards (validation, monitoring, staged rollouts). However, the agent misses two important elements from ground-truth: (1) adding NodeLocal DNSCache for resilience, and (2) establishing proactive monitoring (DNS resolution-success-rate alarm and synthetic checks for the processor hostname). The agent focuses heavily on preventing recurrence through process improvements but doesn't include the architectural enhancement (NodeLocal DNSCache) or specific observability improvements mentioned in ground-truth. The remediation is sound and safe, but incomplete compared to the comprehensive ground-truth approach."
+      },
+      "confidence": "high",
+      "confidence_calibrated": true,
+      "agent_confirmed_hypothesis_id": "h1",
+      "_agent_result": {
+        "conclusion": {
+          "root_cause": "CoreDNS configuration change at 22:05Z switched to a single upstream resolver (10.2.0.2) while simultaneously reducing cache TTL from 30s to 5s. This created a single point of failure that was exposed when upstream resolver 10.2.0.2 became unreachable or timed out starting at 22:11Z. The elimination of resolver redundancy meant DNS resolution failures for external domains (api.processor.example) could not fail over to alternate upstreams, causing 12-14% SERVFAIL rate and cascading payment service errors. The 6-minute delay between config change and first timeout suggests the TTL reduction (6x query rate increase) may have contributed to overwhelming the resolver, though direct evidence of resolver resource exhaustion is unavailable.",
+          "confirmed_hypothesis_id": "h1",
+          "timeline": [
+            "22:05:00Z - CoreDNS Corefile change deployed: switched to single upstream resolver 10.2.0.2, reduced cache TTL from 30s to 5s",
+            "22:05:05Z - CoreDNS config reload completed, new configuration active",
+            "22:05Z - CoreDNS SERVFAIL rate begins rising from 0% to 0.3%, first anomaly detected",
+            "22:11:06Z - CoreDNS logs 'upstream resolver timeout (single upstream configured)' for 10.2.0.2 when resolving api.processor.example",
+            "22:10-22:14Z - payments-svc DNS resolution errors peak at 16.4%, overall error rate reaches 7.8%",
+            "22:12-22:20Z - CoreDNS SERVFAIL rate peaks at 12.5-14.0%",
+            "22:33:00Z - Corefile reverted to multi-upstream configuration",
+            "22:33Z - Recovery: CoreDNS SERVFAIL drops to 0.8%, payments-svc errors return to 1.0-1.2% baseline"
+          ],
+          "remediation": "Immediate: Revert CoreDNS Corefile to multi-upstream resolver configuration to restore redundancy (already completed at 22:33Z). Short-term: Investigate upstream resolver 10.2.0.2 health and capacity - determine if it was down, unreachable, or overwhelmed by increased query load. Verify resolver can handle 6x query rate before re-attempting TTL reduction. Long-term: (1) Implement CoreDNS configuration validation requiring minimum 2 upstream resolvers to prevent single-point-of-failure configs. (2) Load-test DNS infrastructure before TTL changes to validate capacity. (3) Add upstream resolver health monitoring and alerting. (4) Consider staged rollouts for DNS configuration changes with automatic rollback on SERVFAIL threshold breach.",
+          "confidence": "high"
+        },
+        "hypotheses": [
+          {
+            "id": "h1",
+            "status": "confirmed",
+            "statement": "CoreDNS upstream resolver 10.2.0.2 (configured as single upstream at 22:05Z) is unreachable, down, or misconfigured, causing DNS resolution failures for externa"
+          },
+          {
+            "id": "h2",
+            "status": "investigating",
+            "statement": "Cache TTL reduction from 30s to 5s (6x query rate increase) at 22:05Z overwhelmed upstream resolver 10.2.0.2 with query volume, causing rate-limiting, dropped q"
+          },
+          {
+            "id": "h3",
+            "status": "rejected",
+            "statement": "RED HERRING (plausible-but-likely-wrong): External domain api.processor.example has a DNS infrastructure failure (authoritative nameserver outage, DNSSEC valida"
+          },
+          {
+            "id": "h4",
+            "status": "rejected",
+            "statement": "Network policy, firewall rule, or security group change deployed around 22:05Z (not captured in seed snapshot) is blocking CoreDNS pods from reaching upstream r"
+          },
+          {
+            "id": "h5",
+            "status": "rejected",
+            "statement": "Upstream resolver 10.2.0.2 has a configuration issue specifically affecting external/recursive queries (missing forwarders, broken recursion, firewall blocking "
+          }
+        ]
+      },
+      "trace": {
+        "trace_id": "6adaf1a5560890d876c7a8001e459aa1",
+        "found_spans": 24,
+        "steps": [
+          {
+            "span": "llm.generate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 25451.8,
+            "input_tokens": 2451,
+            "output_tokens": 1425
+          },
+          {
+            "span": "a2a.delegate.telemetry",
+            "kind": "delegation",
+            "duration_ms": 13430.7
+          },
+          {
+            "span": "a2a.delegate.change",
+            "kind": "delegation",
+            "duration_ms": 15482.3
+          },
+          {
+            "span": "llm.evaluate_hypotheses",
+            "kind": "llm",
+            "duration_ms": 17415.1,
+            "input_tokens": 2660,
+            "output_tokens": 820
+          },
+          {
+            "span": "llm.conclude",
+            "kind": "llm",
+            "duration_ms": 12953.2,
+            "input_tokens": 3560,
+            "output_tokens": 684
+          },
+          {
+            "span": "investigation",
+            "kind": "investigation",
+            "duration_ms": 86701.5
+          },
+          {
+            "span": "a2a.handle.SRE Investigator Agent",
+            "kind": "a2a_server",
+            "duration_ms": 86708.9
+          }
+        ],
+        "delegation_count": 2,
+        "tokens": {
+          "input": 26013,
+          "output": 8787,
+          "total": 34800
+        },
+        "errors": [],
+        "root_total_ms": 86701.5
+      }
+    }
+  ]
+}

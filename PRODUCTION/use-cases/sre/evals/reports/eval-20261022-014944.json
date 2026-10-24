@@ -1,0 +1,34 @@
+{
+  "runs": [
+    {
+      "tenant_id": "acme-retail",
+      "scenario_id": "rds-connection-exhaustion",
+      "error": "Server disconnected without sending a response."
+    },
+    {
+      "tenant_id": "acme-retail",
+      "scenario_id": "cache-stampede",
+      "error": "Server disconnected without sending a response."
+    },
+    {
+      "tenant_id": "acme-retail",
+      "scenario_id": "bad-deploy-latency-regression",
+      "error": "Server disconnected without sending a response."
+    },
+    {
+      "tenant_id": "globex-fintech",
+      "scenario_id": "pod-crashloop-bad-config",
+      "error": "Server disconnected without sending a response."
+    },
+    {
+      "tenant_id": "globex-fintech",
+      "scenario_id": "noisy-neighbor-latency",
+      "error": "Server disconnected without sending a response."
+    },
+    {
+      "tenant_id": "globex-fintech",
+      "scenario_id": "dns-resolution-failure",
+      "error": "Server disconnected without sending a response."
+    }
+  ]
+}

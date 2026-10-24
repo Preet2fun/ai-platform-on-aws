@@ -13,8 +13,10 @@ Platform-wide conventions for consistency across AgentCore components. Use-case-
 - `env`, `owner`, `cost-center`, `data-classification`.
 
 ## Memory namespaces
-Follow `memory/examples/namespace-conventions.md`: an outermost isolation boundary, then
-`agent/{agentName}/actor/{actorId}/{recordScope}`; reflections are a sub-path of episodes.
+Follow `memory/multi-tenant-memory-design.html`: put the isolation boundary outermost. For
+single-dimension isolation use `agent/{agentName}/actor/{actorId}/{recordScope}` with reflections
+as a sub-path of episodes; for multi-tenant isolation use a composite
+`actorId = {tenantId}:{agentId}:{userId}` enforced by a single shared ABAC IAM policy.
 
 ## Infrastructure as code & versioning
 - IaC only; no console changes in production.
