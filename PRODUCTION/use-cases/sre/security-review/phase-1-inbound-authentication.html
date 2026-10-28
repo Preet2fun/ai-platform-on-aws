@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Security Review — Layer 1: Inbound Authentication</title>
+<link rel="stylesheet" href="assets/review.css" />
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <div class="crumbs">SRE Agentic Platform · Security Review · AWS Bedrock AgentCore</div>
+  <h1>Layer 1 — Inbound Authentication</h1>
+  <div class="sub">Who is allowed to call the platform at all, and how that is proven before any agent code runs.</div>
+  <div class="meta">
+    <span><b>Account:</b> 001961766007</span>
+    <span><b>Region:</b> us-east-1</span>
+    <span><b>Entry runtime:</b> sre_agentic_dev_supervisor</span>
+    <span><b>IdP:</b> Amazon Cognito (M2M / client-credentials)</span>
+    <span><b>Status:</b> <span class="pill good">Enforced · Verified live</span></span>
+  </div>
+</header>
+
+<h2>1. What this layer is</h2>
+<p>
+The <b>supervisor runtime</b> is the single front door to the entire platform. Every incident
+investigation enters here. <b>Inbound authentication</b> is the control that decides whether a
+caller is even allowed to reach the supervisor's application code. If this layer is weak, nothing
+behind it matters.
+</p>
+<p>
+We enforce inbound auth with an <b>AgentCore inbound JWT authorizer</b> backed by <b>Amazon
+Cognito</b> using the OAuth 2.0 <b>client-credentials</b> grant (machine-to-machine). The AgentCore
+platform validates the caller's token — signature, expiry, issuer, and client id — <i>before</i>
+the request is handed to our container. Our code never sees an unauthenticated request.
+</p>
+
+<div class="callout term">
+  <span class="label">Terminology — the pieces, in AWS terms</span>
+  <ul>
+    <li><b>JWT (JSON Web Token):</b> a signed, base64url token with three parts
+      (<code>header.payload.signature</code>). The payload carries "claims" (who, what scope, when it
+      expires). Signed by the issuer so it can't be forged or tampered with.</li>
+    <li><b>Amazon Cognito User Pool:</b> AWS's managed identity provider (IdP). It issues and signs
+      the JWTs. Ours is M2M-only — it mints tokens for <i>services</i>, not human logins.</li>
+    <li><b>App Client:</b> a registered caller identity inside the pool. Each has a
+      <code>client_id</code> and a <code>client_secret</code>. We create <b>one app client per
+      tenant</b> (acme-retail, globex-fintech) plus one for internal gateway calls.</li>
+    <li><b>Client-credentials grant (2-legged OAuth / "M2M"):</b> the OAuth flow where a service
+      authenticates <i>as itself</i> (not on behalf of a human) using its
+      <code>client_id</code> + <code>client_secret</code> to get an access token.</li>
+    <li><b>Resource Server:</b> a Cognito construct that defines the custom <b>scopes</b> a token
+      can carry for "your API." It is <i>not</i> a server you run — it is a namespace of permissions.
+      Ours is named <code>sre-api</code> and defines one scope, <code>sre-api/invoke</code>. A
+      client-credentials token is only issued if the client is allowed that scope. Think of it as
+      "the catalogue of permissions the pool is allowed to stamp into a machine token."</li>
+    <li><b>Discovery URL (OIDC):</b> a well-known metadata URL Cognito publishes
+      (<code>/.well-known/openid-configuration</code>). AgentCore reads it to find Cognito's public
+      signing keys (JWKS) so it can verify token signatures automatically.</li>
+    <li><b>Inbound JWT Authorizer (AgentCore):</b> runtime configuration that tells AgentCore "only
+      accept requests carrying a valid JWT from this issuer, for these client ids." Validation
+      happens at the platform edge.</li>
+  </ul>
+</div>
+
+<h2>2. Architecture — where this control sits</h2>
+<div class="flow">
+<svg viewBox="0 0 960 300" width="100%" role="img" aria-label="Inbound auth architecture">
+  <style>
+    .b{fill:#1c2330;stroke:#30363d;rx:8;} .t{fill:#e6edf3;font:13px sans-serif;} .s{fill:#9da7b3;font:11px sans-serif;}
+    .edge{stroke:#58a6ff;stroke-width:2;fill:none;} .lbl{fill:#58a6ff;font:11px sans-serif;}
+    .deny{stroke:#f85149;} .dlbl{fill:#f85149;font:11px sans-serif;}
+  </style>
+  <!-- caller -->
+  <rect class="b" x="20" y="110" width="150" height="70" rx="8"/>
+  <text class="t" x="34" y="138">Caller (per tenant)</text>
+  <text class="s" x="34" y="156">acme-retail client</text>
+  <text class="s" x="34" y="170">client_id + secret</text>
+  <!-- cognito -->
+  <rect class="b" x="250" y="30" width="190" height="80" rx="8"/>
+  <text class="t" x="264" y="56">Amazon Cognito</text>
+  <text class="s" x="264" y="74">pool sre-agentic-dev-pool</text>
+  <text class="s" x="264" y="90">/oauth2/token → signed JWT</text>
+  <!-- agentcore platform -->
+  <rect class="b" x="250" y="150" width="190" height="90" rx="8"/>
+  <text class="t" x="264" y="176">AgentCore platform</text>
+  <text class="s" x="264" y="194">JWT authorizer validates:</text>
+  <text class="s" x="264" y="210">sig · exp · iss · client_id</text>
+  <text class="s" x="264" y="226">(reads JWKS via discovery URL)</text>
+  <!-- supervisor -->
+  <rect class="b" x="540" y="150" width="200" height="90" rx="8"/>
+  <text class="t" x="554" y="176">Supervisor runtime</text>
+  <text class="s" x="554" y="194">container /invocations</text>
+  <text class="s" x="554" y="210">sees ONLY verified requests</text>
+  <text class="s" x="554" y="226">→ Layer 2 (tenant mapping)</text>
+  <!-- rejected -->
+  <rect class="b" x="540" y="40" width="200" height="60" rx="8" style="stroke:#f85149"/>
+  <text class="t" x="554" y="64">401 / AccessDenied</text>
+  <text class="s" x="554" y="82">no token · bad token · SigV4</text>
+
+  <!-- edges -->
+  <path class="edge" d="M170 135 C210 120 215 85 250 75"/>
+  <text class="lbl" x="176" y="105">1. get token</text>
+  <path class="edge" d="M345 110 L345 150"/>
+  <text class="lbl" x="350" y="134">2. Bearer JWT</text>
+  <path class="edge" d="M170 160 C205 175 215 190 250 193"/>
+  <text class="lbl" x="150" y="192">3. call w/ token</text>
+  <path class="edge" d="M440 195 L540 195"/>
+  <text class="lbl" x="452" y="188">4. verified → forward</text>
+  <path class="edge deny" d="M440 170 C480 150 500 90 540 75"/>
+  <text class="dlbl" x="452" y="120">reject at edge</text>
+</svg>
+</div>
+
+<h2>3. Request / response flow (production example: tenant <code>acme-retail</code>)</h2>
+<p>Here is the exact two-step flow a real caller performs. Step A gets a token from Cognito;
+step B calls the supervisor with it. Both are shown with real values from this account.</p>
+
+<h3>Step A — obtain an M2M access token</h3>
+<pre><code>POST https://sre-agentic-dev-auth.auth.us-east-1.amazoncognito.com/oauth2/token
+Authorization: Basic base64(client_id:client_secret)     # acme-retail client
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&amp;scope=sre-api/invoke
+
+→ 200 OK
+{ "access_token": "eyJraWQ...", "expires_in": 3600, "token_type": "Bearer" }</code></pre>
+
+<h3>Step B — invoke the supervisor with the Bearer token</h3>
+<pre><code>POST https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/
+     {urlEncodedSupervisorArn}/invocations?qualifier=DEFAULT
+Authorization: Bearer eyJraWQ...
+Content-Type: application/json
+X-Amzn-Bedrock-AgentCore-Runtime-Session-Id: &lt;uuid&gt;
+
+{ "scenario_id": "rds-connection-exhaustion",
+  "alarm": "checkout-api-5xx-high — connection pool exhausted" }
+          ^ note: NO tenant_id in the body — tenant is derived from the token (Layer 2)
+
+→ 200 OK  (full investigation result)</code></pre>
+
+<div class="callout">
+<span class="label">Why the AgentCore platform, not our code, validates the token</span>
+Validation happens at the <b>platform edge</b>. By the time <code>/invocations</code> reaches our
+container, AgentCore has already checked the signature (against Cognito's JWKS), expiry, issuer, and
+that <code>client_id</code> is in the allow-list. A bug in our app can therefore never
+<i>accidentally</i> accept an unauthenticated request — the request would never arrive.
+</div>
+
+<h3>3A. End-to-end sequence — happy path &amp; every failure mode</h3>
+<p>
+The sequence diagram below traces the full inbound-auth flow. It shows the
+<b>happy path</b> (acme-retail gets a token and is admitted) plus every <b>failure scenario</b> this
+layer defends against, and — in the notes and the table that follows — exactly what each request
+carries on the wire.
+</p>
+
+<div class="flow">
+<svg viewBox="0 0 980 760" width="100%" role="img" aria-label="Inbound authentication sequence — happy path and failure modes" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#58a6ff"/>
+    </marker>
+    <marker id="arrR" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#9da7b3"/>
+    </marker>
+    <marker id="arrBad" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 Z" fill="#f85149"/>
+    </marker>
+  </defs>
+
+  <!-- lifelines -->
+  <g stroke="#30363d" stroke-dasharray="3 4">
+    <line x1="120" y1="70" x2="120" y2="740"/>
+    <line x1="370" y1="70" x2="370" y2="740"/>
+    <line x1="620" y1="70" x2="620" y2="740"/>
+    <line x1="860" y1="70" x2="860" y2="740"/>
+  </g>
+  <!-- actor headers -->
+  <g font-size="12">
+    <rect x="40" y="30" width="160" height="34" rx="6" fill="#1c2330" stroke="#30363d"/>
+    <text x="120" y="52" fill="#e6edf3" text-anchor="middle">Caller (acme-retail)</text>
+    <rect x="300" y="30" width="140" height="34" rx="6" fill="#1c2330" stroke="#30363d"/>
+    <text x="370" y="52" fill="#e6edf3" text-anchor="middle">Amazon Cognito</text>
+    <rect x="540" y="30" width="160" height="34" rx="6" fill="#1c2330" stroke="#30363d"/>
+    <text x="620" y="52" fill="#e6edf3" text-anchor="middle">AgentCore Authorizer</text>
+    <rect x="790" y="30" width="150" height="34" rx="6" fill="#1c2330" stroke="#30363d"/>
+    <text x="860" y="52" fill="#e6edf3" text-anchor="middle">Supervisor Runtime</text>
+  </g>
+
+  <!-- HAPPY PATH band -->
+  <rect x="24" y="80" width="932" height="300" rx="8" fill="rgba(63,185,80,.06)" stroke="rgba(63,185,80,.35)"/>
+  <text x="36" y="98" fill="#3fb950" font-size="12" font-weight="700">HAPPY PATH — admitted</text>
+
+  <g font-size="11" fill="#c9d1d9">
+    <!-- A: caller -> cognito -->
+    <line x1="120" y1="120" x2="368" y2="120" stroke="#58a6ff" stroke-width="2" marker-end="url(#arr)"/>
+    <text x="124" y="114">A. POST /oauth2/token — Basic(client_id:secret), grant=client_credentials, scope=sre-api/invoke</text>
+    <!-- cognito note -->
+    <rect x="300" y="132" width="250" height="34" rx="4" fill="#161b22" stroke="#30363d"/>
+    <text x="312" y="147" fill="#9da7b3">Verify client_id + secret;</text>
+    <text x="312" y="160" fill="#9da7b3">check client may use the scope</text>
+    <!-- cognito -> caller -->
+    <line x1="368" y1="186" x2="122" y2="186" stroke="#9da7b3" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#arrR)"/>
+    <text x="124" y="180">200 — access_token (RS256 JWT), expires_in 3600</text>
+    <!-- B: caller -> agentcore -->
+    <line x1="120" y1="222" x2="618" y2="222" stroke="#58a6ff" stroke-width="2" marker-end="url(#arr)"/>
+    <text x="124" y="216">B. POST /invocations — Bearer JWT, Session-Id, body{scenario_id, alarm} (NO tenant_id)</text>
+    <!-- agentcore note -->
+    <rect x="540" y="234" width="300" height="46" rx="4" fill="#161b22" stroke="#30363d"/>
+    <text x="552" y="249" fill="#9da7b3">Read JWKS via discoveryUrl; verify</text>
+    <text x="552" y="262" fill="#9da7b3">signature, exp, iss, and client_id</text>
+    <text x="552" y="275" fill="#9da7b3">is in allowedClients</text>
+    <!-- agentcore -> supervisor -->
+    <line x1="620" y1="302" x2="858" y2="302" stroke="#58a6ff" stroke-width="2" marker-end="url(#arr)"/>
+    <text x="624" y="296">forward verified request (client_id claim available)</text>
+    <!-- supervisor note -->
+    <rect x="762" y="314" width="190" height="34" rx="4" fill="#161b22" stroke="#30363d"/>
+    <text x="774" y="329" fill="#9da7b3">Layer 2: map client_id</text>
+    <text x="774" y="342" fill="#9da7b3">to tenant; investigate</text>
+    <!-- supervisor -> caller (200) -->
+    <line x1="858" y1="368" x2="122" y2="368" stroke="#9da7b3" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#arrR)"/>
+    <text x="124" y="362">200 — hypotheses, conclusion, remediation</text>
+  </g>
+
+  <!-- FAILURE band -->
+  <rect x="24" y="392" width="932" height="350" rx="8" fill="rgba(248,81,73,.05)" stroke="rgba(248,81,73,.3)"/>
+  <text x="36" y="410" fill="#f85149" font-size="12" font-weight="700">FAILURE MODES — rejected at the edge, never reach the Supervisor</text>
+
+  <g font-size="11" fill="#c9d1d9">
+    <!-- f1 -->
+    <line x1="120" y1="436" x2="618" y2="436" stroke="#f85149" stroke-width="1.6" marker-end="url(#arrBad)"/>
+    <text x="124" y="430">no Authorization header</text>
+    <line x1="618" y1="452" x2="122" y2="452" stroke="#f85149" stroke-width="1.6" stroke-dasharray="5 3" marker-end="url(#arrBad)"/>
+    <text x="124" y="446" fill="#f85149">401 Missing Authentication Token</text>
+    <!-- f2 -->
+    <line x1="120" y1="486" x2="618" y2="486" stroke="#f85149" stroke-width="1.6" marker-end="url(#arrBad)"/>
+    <text x="124" y="480">SigV4 (IAM) request, no Bearer token</text>
+    <line x1="618" y1="502" x2="122" y2="502" stroke="#f85149" stroke-width="1.6" stroke-dasharray="5 3" marker-end="url(#arrBad)"/>
+    <text x="124" y="496" fill="#f85149">AccessDenied — Authorization method mismatch</text>
+    <!-- f3 -->
+    <line x1="120" y1="536" x2="618" y2="536" stroke="#f85149" stroke-width="1.6" marker-end="url(#arrBad)"/>
+    <text x="124" y="530">Bearer expired JWT</text>
+    <line x1="618" y1="552" x2="122" y2="552" stroke="#f85149" stroke-width="1.6" stroke-dasharray="5 3" marker-end="url(#arrBad)"/>
+    <text x="124" y="546" fill="#f85149">403 invalid token (exp failed)</text>
+    <!-- f4 -->
+    <line x1="120" y1="586" x2="618" y2="586" stroke="#f85149" stroke-width="1.6" marker-end="url(#arrBad)"/>
+    <text x="124" y="580">Bearer JWT from a different issuer</text>
+    <line x1="618" y1="602" x2="122" y2="602" stroke="#f85149" stroke-width="1.6" stroke-dasharray="5 3" marker-end="url(#arrBad)"/>
+    <text x="124" y="596" fill="#f85149">403 invalid token (signature / iss failed)</text>
+    <!-- f5 -->
+    <line x1="120" y1="636" x2="618" y2="636" stroke="#f85149" stroke-width="1.6" marker-end="url(#arrBad)"/>
+    <text x="124" y="630">Bearer valid JWT, but client_id NOT in allowedClients</text>
+    <line x1="618" y1="652" x2="122" y2="652" stroke="#f85149" stroke-width="1.6" stroke-dasharray="5 3" marker-end="url(#arrBad)"/>
+    <text x="124" y="646" fill="#f85149">403 unauthorized client</text>
+    <!-- f6: at cognito -->
+    <line x1="120" y1="700" x2="368" y2="700" stroke="#f85149" stroke-width="1.6" marker-end="url(#arrBad)"/>
+    <text x="124" y="694">token request for a scope NOT granted to the client</text>
+    <line x1="368" y1="716" x2="122" y2="716" stroke="#f85149" stroke-width="1.6" stroke-dasharray="5 3" marker-end="url(#arrBad)"/>
+    <text x="124" y="710" fill="#f85149">400 invalid_scope (Cognito issues no token)</text>
+  </g>
+</svg>
+</div>
+
+<h4>What each request carries on the wire (field-by-field)</h4>
+<table>
+  <tr><th>Step</th><th>Field</th><th>Value / purpose</th><th>Who checks it</th></tr>
+  <tr><td rowspan="3">A → Cognito</td><td><code>Authorization: Basic</code></td><td>base64(<code>client_id</code>:<code>client_secret</code>) — proves the caller owns the client</td><td>Cognito</td></tr>
+  <tr><td><code>grant_type</code></td><td><code>client_credentials</code> — M2M flow, no human</td><td>Cognito</td></tr>
+  <tr><td><code>scope</code></td><td><code>sre-api/invoke</code> — must be granted to this client or token is refused</td><td>Cognito (resource server)</td></tr>
+  <tr><td rowspan="4">B → AgentCore</td><td><code>Authorization: Bearer</code></td><td>the signed JWT from step A</td><td>AgentCore edge</td></tr>
+  <tr><td>JWT <code>signature</code> + <code>iss</code></td><td>verified against Cognito JWKS (fetched via discoveryUrl)</td><td>AgentCore edge</td></tr>
+  <tr><td>JWT <code>exp</code></td><td>token must not be expired (1h lifetime)</td><td>AgentCore edge</td></tr>
+  <tr><td>JWT <code>client_id</code></td><td>must be in <code>allowedClients</code>; later mapped to tenant (Layer 2)</td><td>AgentCore edge → Supervisor</td></tr>
+  <tr><td>B (headers)</td><td><code>X-Amzn-...-Session-Id</code></td><td>runtime session id — groups related calls / spans</td><td>AgentCore</td></tr>
+  <tr><td>B (body)</td><td><code>scenario_id</code>, <code>alarm</code></td><td>the incident to investigate — <b>no</b> tenant_id (tenant comes from the token)</td><td>Supervisor (Layer 2)</td></tr>
+</table>
+
+<h2>4. The actual token — decoded (real, from this account)</h2>
+<p>This is a genuine access token issued to the <code>acme-retail</code> client, decoded. This is
+the single most useful artifact for understanding what the security actually looks like.</p>
+
+<h4>Header</h4>
+<pre><code>{
+  "kid": "aDenr9WLUZzBicG2CYpdK1gsEwc9Lo1Cv5D3Si0juvo=",   // which Cognito signing key
+  "alg": "RS256"                                            // RSA signature — cannot be forged
+}</code></pre>
+
+<h4>Payload (claims)</h4>
+<pre><code>{
+  "sub":       "66f0eb5m3ri4ad02d6hjjd37db",   // subject = the client id (this is a machine)
+  "token_use": "access",
+  "scope":     "sre-api/invoke",                // the resource-server permission
+  "iss":       "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_wWlzIHoRM",
+  "client_id": "66f0eb5m3ri4ad02d6hjjd37db",   // &lt;-- VERIFIED caller identity
+  "exp":       1793083366,                      // expires in 1 hour
+  "iat":       1793079766,
+  "jti":       "f4ab3d9e-8e42-411d-a3c4-146e2150d82b",   // unique token id
+  "version":   2
+}</code></pre>
+
+<div class="callout warn">
+<span class="label">Critical observation for the whole review</span>
+The token proves <b>which client</b> (<code>client_id</code>) and <b>what scope</b> — but it carries
+<b>no tenant claim</b>. So this layer proves "a known, allowed machine is calling." It does
+<b>not</b> by itself decide <i>which tenant's data</i> the caller may touch. That tenant decision is
+made one layer deeper, in the supervisor, by mapping this verified <code>client_id</code> → a tenant
+(see <b>Layer 2 — Tenant Identity &amp; Isolation</b>). This split is deliberate and is the hinge of
+our multi-tenant isolation story.
+</div>
+
+<h2>5. The live configuration (verified)</h2>
+<h4>Inbound JWT authorizer on the supervisor runtime</h4>
+<pre><code>{
+  "customJWTAuthorizer": {
+    "discoveryUrl": "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_wWlzIHoRM/.well-known/openid-configuration",
+    "allowedClients": [
+      "66f0eb5m3ri4ad02d6hjjd37db",   // acme-retail
+      "5cnjgnqi4o2avg62egtu6be4tt"    // globex-fintech
+    ]
+  }
+}</code></pre>
+
+<h4>Cognito resource server (defines the scope)</h4>
+<pre><code>Identifier: sre-api
+Scopes: [ { ScopeName: "invoke", ScopeDescription: "Permission to invoke the SRE supervisor agent." } ]
+→ full scope string requested by clients: "sre-api/invoke"</code></pre>
+
+<h4>App clients (one per tenant + internal)</h4>
+<table>
+  <tr><th>Client name</th><th>client_id</th><th>Purpose</th></tr>
+  <tr><td>sre-agentic-dev-acme-retail</td><td>66f0eb5m3ri4ad02d6hjjd37db</td><td>Tenant acme-retail front-door identity</td></tr>
+  <tr><td>sre-agentic-dev-globex-fintech</td><td>5cnjgnqi4o2avg62egtu6be4tt</td><td>Tenant globex-fintech front-door identity</td></tr>
+  <tr><td>sre-agentic-dev-gateway-caller</td><td>62qumqhsk7tnhsg817j2gjhc48</td><td>Internal service→gateway calls (Layer 4) — NOT in the supervisor allow-list</td></tr>
+</table>
+<p>The pool is M2M-only: <code>AdminCreateUserConfig.AllowAdminCreateUserOnly = true</code> — there
+is no human self-signup surface.</p>
+
+<h2>6. Proof it is actually enforced (verified live)</h2>
+<table>
+  <tr><th>Test</th><th>Result</th><th>Meaning</th></tr>
+  <tr><td>Call supervisor with <b>no token</b></td><td><span class="pill bad">HTTP 401</span> "Missing Authentication Token"</td><td>Rejected at the platform edge, never reached the container.</td></tr>
+  <tr><td>Call supervisor with <b>SigV4 (IAM)</b> instead of a token</td><td><span class="pill bad">AccessDenied</span> "Authorization method mismatch"</td><td>Once OAuth is on, the front door is OAuth-only; IAM signing is not a bypass.</td></tr>
+  <tr><td>Call with a <b>valid acme token</b></td><td><span class="pill good">HTTP 200</span></td><td>Full investigation runs; <code>tenant_id: acme-retail</code> derived from the token.</td></tr>
+</table>
+
+<div class="console">
+  <span class="label">Validate in the AWS Console</span>
+  <ol>
+    <li><b>Cognito</b> → User pools → <code>sre-agentic-dev-pool</code> → <b>App integration</b> →
+      <b>App clients</b>: confirm the 3 clients; open <code>acme-retail</code> → confirm OAuth flow
+      = <b>Client credentials</b>, allowed scope = <code>sre-api/invoke</code>, and a secret exists.</li>
+    <li>Same page → <b>Resource servers</b>: confirm <code>sre-api</code> with scope <code>invoke</code>.</li>
+    <li>Same page → <b>Domain</b>: confirm <code>sre-agentic-dev-auth</code> (the token endpoint host).</li>
+    <li><b>Bedrock AgentCore</b> → Agent Runtime → <code>sre_agentic_dev_supervisor</code>: confirm an
+      inbound JWT authorizer is configured (discovery URL + 2 allowed clients). Open any specialist
+      (e.g. <code>sre_agentic_dev_telemetry</code>) and confirm it has <b>no</b> JWT authorizer —
+      those are SigV4-internal (Layer 3).</li>
+  </ol>
+</div>
+
+<div class="console">
+  <span class="label">Re-confirm via CLI</span>
+<pre><code>export AWS_PROFILE=agentcore AWS_REGION=us-east-1 AWS_PAGER=""
+aws bedrock-agentcore-control get-agent-runtime \
+  --agent-runtime-id sre_agentic_dev_supervisor-dSf6vD9ngf \
+  --query "authorizerConfiguration"
+aws cognito-idp list-user-pool-clients --user-pool-id us-east-1_wWlzIHoRM \
+  --query "UserPoolClients[].ClientName" --output table
+aws cognito-idp describe-user-pool --user-pool-id us-east-1_wWlzIHoRM \
+  --query "UserPool.AdminCreateUserConfig"</code></pre>
+</div>
+
+<h2>7. Security assessment</h2>
+<h3>Strengths</h3>
+<ul>
+  <li><b>Platform-enforced</b> — auth is checked before our code runs; an app bug cannot expose an unauthenticated path.</li>
+  <li><b>OAuth-only front door</b> — SigV4 is proven to be rejected; there is no dual auth path to exploit.</li>
+  <li><b>Short-lived tokens</b> (1h) and <b>per-tenant clients</b> give per-caller revocability and blast-radius containment.</li>
+  <li><b>No human-login surface</b> (M2M-only pool) shrinks the attack surface.</li>
+</ul>
+
+<h3>Findings</h3>
+<div class="finding"><span class="id pill warn">F1-A · Medium</span>
+  <b>Long-lived client secrets.</b> M2M client secrets do not auto-rotate. Recommend a rotation
+  schedule, or migrate to <b>private-key-JWT</b> client auth (no shared secret at all).</div>
+<div class="finding"><span class="id pill info">F1-B · By design</span>
+  <b>Scope does not encode tenant.</b> Any allowed client with <code>sre-api/invoke</code> passes
+  this layer; tenant enforcement is deliberately deferred to Layer 2 (client_id→tenant mapping). For
+  a large tenant fleet, consider per-tenant scopes (e.g. <code>sre-api/tenant.acme-retail</code>) so
+  the token itself is tenant-bound.</div>
+<div class="finding"><span class="id pill warn">F1-C · Low</span>
+  <b>Static allow-list.</b> Adding a tenant requires redeploying the supervisor's authorizer config
+  (<code>allowedClients</code>). Operational friction, not a vulnerability.</div>
+<div class="finding"><span class="id pill warn">F1-D · Low/Med</span>
+  <b>No WAF / per-caller rate limiting</b> at the inbound edge beyond AgentCore's built-in
+  throttling. Consider if the endpoint becomes externally reachable by untrusted networks.</div>
+
+<div class="callout good">
+  <span class="label">Verdict</span>
+  Layer 1 is <b>solid and enforced</b>. The front door accepts only known, signed, unexpired M2M
+  tokens and rejects everything else at the platform edge. Findings are hardening items, not holes.
+  The one thing to carry forward: the token authenticates a <i>client</i>, not a <i>tenant</i> —
+  Layer 2 is where that becomes an enforced isolation boundary.
+</div>
+
+<div class="nav">
+  <span>&nbsp;</span>
+  <span><a href="phase-2-tenant-isolation.html">Next → Layer 2: Tenant Identity &amp; Isolation</a></span>
+</div>
+
+<footer class="doc">
+  SRE Agentic Platform · Security Review · Layer 1 of 10 · Evidence captured live from account
+  001961766007 (us-east-1). Tokens/secrets shown are from a dev environment with synthetic data.
+</footer>
+
+</div>
+</body>
+</html>

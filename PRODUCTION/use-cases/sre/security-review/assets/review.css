@@ -1,0 +1,64 @@
+/* Shared styling for the SRE Agentic Platform — Security Review documents.
+   Dark, print-friendly, self-contained (no external fonts/CDNs). */
+:root {
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --border:#30363d;
+  --text:#e6edf3; --muted:#9da7b3; --accent:#58a6ff; --good:#3fb950;
+  --warn:#d29922; --bad:#f85149; --code:#0b0f14;
+}
+* { box-sizing:border-box; }
+body {
+  margin:0; background:var(--bg); color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  line-height:1.6; font-size:15px;
+}
+.wrap { max-width:1060px; margin:0 auto; padding:32px 28px 80px; }
+header.doc { border-bottom:2px solid var(--border); padding-bottom:18px; margin-bottom:28px; }
+header.doc .crumbs { color:var(--muted); font-size:13px; letter-spacing:.03em; }
+header.doc h1 { margin:8px 0 6px; font-size:28px; }
+header.doc .sub { color:var(--muted); font-size:15px; }
+.meta { display:flex; flex-wrap:wrap; gap:8px 18px; margin-top:14px; font-size:13px; color:var(--muted); }
+.meta b { color:var(--text); font-weight:600; }
+
+h2 { font-size:21px; margin:34px 0 12px; padding-bottom:6px; border-bottom:1px solid var(--border); }
+h3 { font-size:17px; margin:24px 0 8px; color:var(--accent); }
+h4 { font-size:15px; margin:18px 0 6px; color:var(--text); }
+p { margin:10px 0; }
+ul,ol { margin:10px 0; padding-left:22px; }
+li { margin:5px 0; }
+code { background:var(--code); padding:1px 6px; border-radius:4px; font-family:"SF Mono",Menlo,Consolas,monospace; font-size:13px; color:#c9d1d9; }
+pre { background:var(--code); border:1px solid var(--border); border-radius:8px; padding:14px 16px; overflow:auto; font-size:12.5px; line-height:1.5; }
+pre code { background:none; padding:0; }
+
+.callout { border-left:4px solid var(--accent); background:var(--panel); padding:12px 16px; border-radius:0 8px 8px 0; margin:16px 0; }
+.callout.term { border-left-color:#a371f7; }
+.callout.good { border-left-color:var(--good); }
+.callout.warn { border-left-color:var(--warn); }
+.callout.bad  { border-left-color:var(--bad); }
+.callout .label { font-size:11px; text-transform:uppercase; letter-spacing:.08em; font-weight:700; color:var(--muted); display:block; margin-bottom:4px; }
+.callout.term .label { color:#a371f7; }
+
+table { border-collapse:collapse; width:100%; margin:16px 0; font-size:13.5px; }
+th,td { border:1px solid var(--border); padding:8px 10px; text-align:left; vertical-align:top; }
+th { background:var(--panel2); font-weight:600; }
+tr:nth-child(even) td { background:rgba(255,255,255,.015); }
+
+.pill { display:inline-block; font-size:11px; font-weight:700; padding:2px 9px; border-radius:11px; letter-spacing:.03em; }
+.pill.good { background:rgba(63,185,80,.18); color:var(--good); border:1px solid rgba(63,185,80,.4); }
+.pill.warn { background:rgba(210,153,34,.18); color:var(--warn); border:1px solid rgba(210,153,34,.4); }
+.pill.bad  { background:rgba(248,81,73,.18); color:var(--bad); border:1px solid rgba(248,81,73,.4); }
+.pill.info { background:rgba(88,166,255,.18); color:var(--accent); border:1px solid rgba(88,166,255,.4); }
+
+.flow { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:18px; margin:16px 0; }
+.flow pre { background:transparent; border:none; padding:0; color:var(--text); font-size:12px; }
+
+.console { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin:14px 0; }
+.console .label { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--good); font-weight:700; }
+.console ol { margin:8px 0 0; }
+
+.finding { border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin:12px 0; background:var(--panel); }
+.finding .id { font-weight:700; margin-right:8px; }
+.kv { display:grid; grid-template-columns:150px 1fr; gap:4px 14px; font-size:13.5px; margin:10px 0; }
+.kv div:nth-child(odd){ color:var(--muted); }
+footer.doc { margin-top:50px; padding-top:16px; border-top:1px solid var(--border); color:var(--muted); font-size:12.5px; }
+a { color:var(--accent); }
+.nav { display:flex; justify-content:space-between; margin:30px 0 0; font-size:14px; }

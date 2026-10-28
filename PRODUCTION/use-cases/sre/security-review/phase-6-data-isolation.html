@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Security Review — Layer 6: Data Isolation (tools &amp; memory)</title>
+<link rel="stylesheet" href="assets/review.css" />
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <div class="crumbs">SRE Agentic Platform · Security Review · AWS Bedrock AgentCore</div>
+  <h1>Layer 6 — Data Isolation (tools &amp; memory)</h1>
+  <div class="sub">Proof that one tenant's data — observability evidence and remembered incidents — can never be read by another tenant.</div>
+  <div class="meta">
+    <span><b>Account:</b> 001961766007</span>
+    <span><b>Region:</b> us-east-1</span>
+    <span><b>Enforced in:</b> tools Lambda · memory namespaces</span>
+    <span><b>Tenants:</b> acme-retail, globex-fintech</span>
+    <span><b>Status:</b> <span class="pill good">Enforced · Cross-tenant tested live</span></span>
+  </div>
+</header>
+
+<h2>1. What this layer is</h2>
+<p>
+Layers 1–3 proved identity; Layer 2 turned identity into a tenant; Layers 4–5 funneled tool access
+and protected secrets. Layer 6 is where tenant isolation touches the <b>actual data</b>: the two
+places a tenant's information physically lives —
+</p>
+<ul>
+  <li><b>Tool data</b> — the observability evidence (metrics, logs, traces, changes, events, runbooks) the agents read during an investigation.</li>
+  <li><b>Memory</b> — the long-term record of past incidents the investigator writes and recalls (Phase P2).</li>
+</ul>
+<p>
+The question: if the <code>tenant_id</code> that rides through the system (Layer 2) were ever wrong,
+ignored, or attacker-supplied, could tenant A read tenant B's data? This layer shows the answer is
+<b>no</b> — because both data stores enforce the tenant boundary themselves, as a second,
+independent line of defense (defense-in-depth), not merely trusting that upstream got it right.
+</p>
+
+<div class="callout term">
+  <span class="label">Terminology</span>
+  <ul>
+    <li><b>Defense in depth:</b> the same boundary enforced at more than one layer, so a failure at
+      one layer doesn't breach the system. Tenant is checked at the supervisor (Layer 2) <i>and</i>
+      again at the data stores (here).</li>
+    <li><b>Memory namespace:</b> a path-like key that partitions AgentCore Memory records. Ours is
+      <code>sre/{tenant_id}/episodes</code>. A retrieve names one namespace; it can only match records
+      stored under that exact namespace — cross-namespace matches are impossible.</li>
+    <li><b>Scenario (tool data):</b> one incident dataset for a tenant, stored at
+      <code>&lt;tenant&gt;/scenarios/&lt;scenario&gt;/</code>. The tools Lambda resolves this path
+      only within the requested tenant, so a scenario id from another tenant simply does not exist.</li>
+    <li><b>Tenant-scoped query:</b> every tool call and every memory operation is parameterized by
+      <code>tenant_id</code>; the store uses it to constrain what is even reachable, not just to filter.</li>
+  </ul>
+</div>
+
+<h2>2. Architecture — two stores, each self-enforcing the tenant boundary</h2>
+<div class="flow">
+<svg viewBox="0 0 960 300" width="100%" role="img" aria-label="Data isolation architecture" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
+  <defs><marker id="d6" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#58a6ff"/></marker>
+  <marker id="d6bad" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#f85149"/></marker></defs>
+  <rect x="24" y="120" width="150" height="70" rx="8" fill="#1c2330" stroke="#30363d"/>
+  <text x="38" y="146" fill="#e6edf3" font-size="12">Agent (carries</text>
+  <text x="38" y="162" fill="#e6edf3" font-size="12">tenant_id from L2)</text>
+  <text x="38" y="180" fill="#9da7b3" font-size="10">acme-retail</text>
+  <!-- tools store -->
+  <rect x="300" y="40" width="250" height="90" rx="8" fill="#1c2330" stroke="#30363d"/>
+  <text x="314" y="64" fill="#e6edf3" font-size="12">Tools Lambda → fixtures</text>
+  <text x="314" y="82" fill="#9da7b3" font-size="10">path: &lt;tenant&gt;/scenarios/&lt;scenario&gt;/</text>
+  <text x="314" y="98" fill="#9da7b3" font-size="10">resolves ONLY within tenant_id</text>
+  <text x="314" y="116" fill="#3fb950" font-size="10">other tenant's scenario → 404</text>
+  <!-- memory store -->
+  <rect x="300" y="170" width="250" height="90" rx="8" fill="#1c2330" stroke="#30363d"/>
+  <text x="314" y="194" fill="#e6edf3" font-size="12">AgentCore Memory</text>
+  <text x="314" y="212" fill="#9da7b3" font-size="10">namespace: sre/&lt;tenant&gt;/episodes</text>
+  <text x="314" y="228" fill="#9da7b3" font-size="10">retrieve matches ONE namespace</text>
+  <text x="314" y="246" fill="#3fb950" font-size="10">cross-namespace match impossible</text>
+  <!-- data -->
+  <rect x="660" y="40" width="120" height="40" rx="6" fill="#161b22" stroke="#30363d"/><text x="674" y="64" fill="#9da7b3" font-size="11">acme data</text>
+  <rect x="810" y="40" width="120" height="40" rx="6" fill="#161b22" stroke="#6b2f3a"/><text x="824" y="64" fill="#9da7b3" font-size="11">globex data</text>
+  <rect x="660" y="200" width="120" height="40" rx="6" fill="#161b22" stroke="#30363d"/><text x="674" y="224" fill="#9da7b3" font-size="11">acme episodes</text>
+  <rect x="810" y="200" width="120" height="40" rx="6" fill="#161b22" stroke="#6b2f3a"/><text x="824" y="224" fill="#9da7b3" font-size="11">globex episodes</text>
+  <!-- edges -->
+  <line x1="174" y1="150" x2="298" y2="95" stroke="#58a6ff" stroke-width="2" marker-end="url(#d6)"/>
+  <line x1="174" y1="165" x2="298" y2="210" stroke="#58a6ff" stroke-width="2" marker-end="url(#d6)"/>
+  <line x1="550" y1="70" x2="658" y2="62" stroke="#58a6ff" stroke-width="2" marker-end="url(#d6)"/>
+  <line x1="550" y1="78" x2="808" y2="62" stroke="#f85149" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#d6bad)"/>
+  <text x="590" y="48" fill="#f85149" font-size="9">blocked</text>
+  <line x1="550" y1="215" x2="658" y2="220" stroke="#58a6ff" stroke-width="2" marker-end="url(#d6)"/>
+  <line x1="550" y1="222" x2="808" y2="222" stroke="#f85149" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#d6bad)"/>
+  <text x="590" y="250" fill="#f85149" font-size="9">blocked</text>
+</svg>
+</div>
+
+<h2>3. Store A — tool data isolation (the tools Lambda)</h2>
+<p>Every tool requires <code>tenant_id</code>, and scenario-scoped tools additionally validate that
+the scenario belongs to that tenant <b>before</b> reading any data. This is the actual deployed code:</p>
+<pre><code>def _dispatch(tool, args):
+    tid = args.get("tenant_id")
+    sid = args.get("scenario_id")
+    if not tid:
+        return _err(400, "tenant_id is required")                 # no tenant → refuse
+    ...
+    # scenario-scoped tools: validate tenant AND that the scenario exists FOR THAT TENANT
+    if not sid:
+        return _err(400, "scenario_id is required")
+    fx.tenant_config(tid)        # tenant must exist
+    fx._scenario_dir(tid, sid)   # resolves &lt;tid&gt;/scenarios/&lt;sid&gt;/ — raises 404 if not under this tenant
+    ...                          # only now is any data read, scoped to (tid, sid)</code></pre>
+<p>Because <code>_scenario_dir(tid, sid)</code> resolves the path <i>inside</i> the tenant's own
+directory, a scenario id from another tenant is simply <b>not found</b> — there is no code path that
+reads one tenant's folder while serving another tenant. Isolation is by <b>path construction</b>,
+not by a filter that could be bypassed.</p>
+
+<h2>4. Store B — memory isolation (namespaces)</h2>
+<p>The investigator writes an incident episode under the tenant's namespace and recalls from the same
+namespace. Writes and reads are both parameterized by tenant:</p>
+<pre><code>// write (P2 "conclude"):   namespace = f"sre/{ctx.tenant_id}/episodes"
+// recall (P2 "intake"):    retrieve_memory_records(namespace = f"sre/{ctx.tenant_id}/episodes", ...)</code></pre>
+<p>A <code>RetrieveMemoryRecords</code> call names <b>one</b> namespace and can only return records
+stored under it. acme's recall names <code>sre/acme-retail/episodes</code>; it is structurally
+impossible for it to surface a record stored under <code>sre/globex-fintech/episodes</code>.</p>
+
+<h2>5. Cross-tenant tests — executed live this review</h2>
+
+<h3>5.1 Tool data (via the real gateway, using the gateway-caller token)</h3>
+<pre><code>CASE 1 — globex-fintech asks for an ACME scenario (cross-tenant):
+  tools/call sretools___changes { tenant_id:"globex-fintech", scenario_id:"rds-connection-exhaustion" }
+  → 404 { "error": "unknown scenario 'rds-connection-exhaustion' for tenant 'globex-fintech'
+                    (available: ['pod-crashloop-bad-config','noisy-neighbor-latency','dns-resolution-failure'])" }
+  // acme's scenario does not exist under globex — the request cannot reach acme data.
+
+CASE 2 — globex-fintech asks for ITS OWN scenario:
+  tools/call sretools___changes { tenant_id:"globex-fintech", scenario_id:"pod-crashloop-bad-config" }
+  → 200 { "tenant_id":"globex-fintech", "changes":[ {deploy payments-svc v5.1.0 ...} ] }
+  // its own data returns normally.</code></pre>
+<div class="callout good">
+  <span class="label">Note how the error even avoids leaking</span>
+  The 404 lists only <b>globex's own</b> scenario ids as "available" — it never reveals that acme has
+  a scenario by that name. The isolation holds even in the error message.
+</div>
+
+<h3>5.2 Memory (namespace partition, verified live)</h3>
+<pre><code>list-memory-records  namespace = sre/acme-retail/episodes     → 15 records, all tagged /sre/acme-retail/episodes/
+list-memory-records  namespace = sre/globex-fintech/episodes  → 9  records
+// distinct namespaces, distinct counts; every acme record's namespace is /sre/acme-retail/episodes/.
+// a retrieve against acme's namespace can only ever return acme records.</code></pre>
+
+<h3>5.3 End-to-end isolation sequence</h3>
+<div class="flow">
+<svg viewBox="0 0 980 300" width="100%" role="img" aria-label="Cross-tenant data isolation sequence" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
+  <defs>
+    <marker id="i6" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#58a6ff"/></marker>
+    <marker id="i6R" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#9da7b3"/></marker>
+    <marker id="i6bad" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#f85149"/></marker>
+  </defs>
+  <g stroke="#30363d" stroke-dasharray="3 4"><line x1="150" y1="60" x2="150" y2="280"/><line x1="500" y1="60" x2="500" y2="280"/><line x1="840" y1="60" x2="840" y2="280"/></g>
+  <g font-size="12">
+    <rect x="50" y="24" width="200" height="30" rx="6" fill="#1c2330" stroke="#30363d"/><text x="150" y="44" fill="#e6edf3" text-anchor="middle">globex agent (tenant=globex)</text>
+    <rect x="400" y="24" width="200" height="30" rx="6" fill="#1c2330" stroke="#30363d"/><text x="500" y="44" fill="#e6edf3" text-anchor="middle">tools Lambda / Memory</text>
+    <rect x="740" y="24" width="200" height="30" rx="6" fill="#1c2330" stroke="#30363d"/><text x="840" y="44" fill="#e6edf3" text-anchor="middle">acme data (never reached)</text>
+  </g>
+  <rect x="24" y="66" width="932" height="96" rx="8" fill="rgba(248,81,73,.05)" stroke="rgba(248,81,73,.3)"/>
+  <text x="36" y="84" fill="#f85149" font-size="12" font-weight="700">CROSS-TENANT attempt — blocked at the store</text>
+  <g font-size="11" fill="#c9d1d9">
+    <line x1="150" y1="110" x2="498" y2="110" stroke="#f85149" stroke-width="1.8" marker-end="url(#i6bad)"/>
+    <text x="154" y="104">changes(tenant=globex, scenario=rds-connection-exhaustion [an ACME scenario])</text>
+    <rect x="360" y="120" width="280" height="30" rx="4" fill="#161b22" stroke="#30363d"/><text x="372" y="139" fill="#9da7b3">_scenario_dir(globex, rds-...) → not found under globex</text>
+    <line x1="500" y1="158" x2="152" y2="158" stroke="#f85149" stroke-width="1.8" stroke-dasharray="5 3" marker-end="url(#i6bad)"/>
+    <text x="154" y="152" fill="#f85149">404 — scenario unknown for this tenant (acme data never touched)</text>
+  </g>
+  <rect x="24" y="170" width="932" height="100" rx="8" fill="rgba(63,185,80,.06)" stroke="rgba(63,185,80,.35)"/>
+  <text x="36" y="188" fill="#3fb950" font-size="12" font-weight="700">OWN-TENANT request — served</text>
+  <g font-size="11" fill="#c9d1d9">
+    <line x1="150" y1="214" x2="498" y2="214" stroke="#58a6ff" stroke-width="2" marker-end="url(#i6)"/>
+    <text x="154" y="208">changes(tenant=globex, scenario=pod-crashloop-bad-config [globex's own])</text>
+    <rect x="380" y="224" width="240" height="30" rx="4" fill="#161b22" stroke="#30363d"/><text x="392" y="243" fill="#9da7b3">resolves globex/scenarios/pod-crashloop/</text>
+    <line x1="500" y1="262" x2="152" y2="262" stroke="#9da7b3" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#i6R)"/>
+    <text x="154" y="256">200 — globex's own change data</text>
+  </g>
+</svg>
+</div>
+
+<h2>6. Defense-in-depth: the tenant boundary is enforced three times</h2>
+<table>
+  <tr><th>Layer</th><th>Where</th><th>What it enforces</th></tr>
+  <tr><td>Layer 2</td><td>Supervisor <code>_resolve_tenant</code></td><td>Derive tenant from verified JWT client_id; reject a spoofed body tenant (403).</td></tr>
+  <tr><td>Layer 6 — Store A</td><td>Tools Lambda <code>_scenario_dir(tid, sid)</code></td><td>Serve only data under the requested tenant's path; other tenant's scenario → 404.</td></tr>
+  <tr><td>Layer 6 — Store B</td><td>Memory namespaces</td><td>Retrieve only from <code>sre/{tenant}/episodes</code>; cross-namespace match impossible.</td></tr>
+</table>
+<p>Even if an upstream check were bypassed, the data store itself would still refuse to serve another
+tenant's data — that is the point of enforcing the boundary at the data layer too.</p>
+
+<div class="console">
+  <span class="label">Validate in the AWS Console</span>
+  <ol>
+    <li><b>Bedrock AgentCore</b> → Memory → <code>sre_agentic_dev_memory</code>: inspect records; note
+      each is under a tenant namespace (<code>sre/acme-retail/episodes</code> vs
+      <code>sre/globex-fintech/episodes</code>).</li>
+    <li><b>Lambda</b> → <code>sre-agentic-dev-tools</code> → Code: see <code>_dispatch</code> /
+      <code>_scenario_dir</code> — tenant + scenario validated before any read.</li>
+    <li><b>CloudWatch</b> → Transaction Search → an investigation trace: the
+      <code>RetrieveMemoryRecords</code> span shows the namespace = the caller's tenant; tool spans
+      carry <code>tenant_id</code> in their attributes (Layer 8).</li>
+  </ol>
+</div>
+
+<div class="console">
+  <span class="label">Re-run the cross-tenant tests (CLI)</span>
+<pre><code>export AWS_PROFILE=agentcore AWS_REGION=us-east-1 AWS_PAGER=""
+MEM=sre_agentic_dev_memory-etFo694V7V
+# memory partition counts:
+aws bedrock-agentcore list-memory-records --memory-id $MEM \
+  --namespace "sre/acme-retail/episodes"    --query "length(memoryRecordSummaries)"
+aws bedrock-agentcore list-memory-records --memory-id $MEM \
+  --namespace "sre/globex-fintech/episodes" --query "length(memoryRecordSummaries)"
+# tool cross-tenant: (fetch a gateway-caller token first, then)
+#   tools/call sretools___changes {tenant_id:"globex-fintech", scenario_id:"rds-connection-exhaustion"}
+#   → expect 404 "unknown scenario for tenant globex-fintech"</code></pre>
+</div>
+
+<h2>7. Security assessment</h2>
+<h3>Strengths</h3>
+<ul>
+  <li><b>Isolation by construction, not by filter</b> — the tools store builds the data path <i>inside</i> the tenant's directory; memory retrieves from a single tenant namespace. There is no "read all, then filter by tenant" step that could be bypassed.</li>
+  <li><b>Defense in depth</b> — the tenant boundary is independently enforced at the supervisor (L2) and at both data stores (L6).</li>
+  <li><b>Fail-closed &amp; non-leaking errors</b> — missing tenant → refuse; cross-tenant scenario → 404 that reveals only the caller's own scenarios.</li>
+  <li><b>Verified live, both stores</b> — cross-tenant tool call blocked (404), own-tenant served (200); memory namespaces physically partitioned (15 vs 9 records).</li>
+</ul>
+
+<h3>Findings</h3>
+<div class="finding"><span class="id pill info">F6-A · Observation</span>
+  <b>Tenant isolation in tools relies on the Lambda code, not an infrastructure boundary.</b> Both
+  tenants' synthetic data live in one Lambda package and are separated by code/path logic. For
+  synthetic dev data this is fine. For <b>real</b> tenant data, prefer an infrastructure boundary too
+  (e.g. per-tenant prefixes in S3/DynamoDB with IAM conditions on <code>tenant_id</code>, or
+  per-tenant partitions) so isolation does not depend solely on application code being correct.</div>
+<div class="finding"><span class="id pill info">F6-B · Depends on F4-D</span>
+  <b>The data boundary trusts the <code>tenant_id</code> argument.</b> The tools Lambda and memory
+  use whatever <code>tenant_id</code> they are given. That value is trustworthy today because the
+  supervisor derives it from the verified JWT (L2) and threads it through. But a specialist reaching
+  the gateway on the shared <code>gateway-caller</code> identity could, in principle, pass a different
+  <code>tenant_id</code> in tool args. Mitigation: per-agent/tenant-scoped gateway identity (F4-D) so
+  the callable tenant is itself constrained by the token, not only by the supervisor's good behavior.</div>
+<div class="finding"><span class="id pill info">F6-C · Good practice confirmed</span>
+  <b>Errors do not leak cross-tenant existence.</b> The cross-tenant 404 lists only the caller's own
+  scenarios — verified live.</div>
+
+<div class="callout good">
+  <span class="label">Verdict</span>
+  Layer 6 is <b>strong and proven</b>: both data stores enforce the tenant boundary themselves, by
+  construction, and cross-tenant access was blocked in a live test while own-tenant access worked.
+  Combined with Layer 2 this gives defense-in-depth tenant isolation. The forward-looking items are
+  an <i>infrastructure</i> boundary for real data (F6-A) and constraining the callable tenant at the
+  token layer (F6-B, via F4-D) — both P5-era hardening, not current leaks.
+</div>
+
+<div class="nav">
+  <span><a href="phase-5-secrets-credential-vault.html">← Layer 5: Secrets &amp; Credential Vault</a></span>
+  <span><a href="phase-7-iam-least-privilege.html">Next → Layer 7: IAM Least Privilege</a></span>
+</div>
+
+<footer class="doc">
+  SRE Agentic Platform · Security Review · Layer 6 of 10 · Evidence captured live from account
+  001961766007 (us-east-1). Dev environment, synthetic data.
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SRE Agentic Platform — Security Review</title>
+<link rel="stylesheet" href="assets/review.css" />
+</head>
+<body>
+<div class="wrap">
+<header class="doc">
+  <div class="crumbs">AWS Bedrock AgentCore · Production use case: SRE agentic platform</div>
+  <h1>Security Review — End to End</h1>
+  <div class="sub">A layer-by-layer review of the platform's security controls, following a request
+    as it flows through the system. Each layer: what the control is, how it is implemented here
+    (with live evidence), where to see it in the AWS console, and its findings.</div>
+  <div class="meta">
+    <span><b>Account:</b> 001961766007</span>
+    <span><b>Region:</b> us-east-1</span>
+    <span><b>Tenants (examples):</b> acme-retail, globex-fintech</span>
+  </div>
+</header>
+
+<h2>Layers</h2>
+<table>
+  <tr><th>#</th><th>Layer</th><th>Question it answers</th><th>Status</th></tr>
+  <tr><td>1</td><td><a href="phase-1-inbound-authentication.html">Inbound Authentication</a></td><td>Who can call the platform at all?</td><td><span class="pill good">Done</span></td></tr>
+  <tr><td>2</td><td><a href="phase-2-tenant-isolation.html">Tenant Identity &amp; Isolation</a></td><td>Is the tenant proven, or spoofable?</td><td><span class="pill good">Done</span></td></tr>
+  <tr><td>3</td><td><a href="phase-3-cross-runtime-a2a.html">Cross-runtime Auth (A2A)</a></td><td>How do agents authenticate to each other?</td><td><span class="pill good">Done</span></td></tr>
+  <tr><td>4</td><td><a href="phase-4-gateway-tool-access.html">Tool Access Control (Gateway)</a></td><td>Can an agent reach a tool it shouldn't?</td><td><span class="pill good">Done</span></td></tr>
+  <tr><td>5</td><td><a href="phase-5-secrets-credential-vault.html">Secrets &amp; Credential Vault</a></td><td>Where do secrets live; who sees them?</td><td><span class="pill good">Done</span></td></tr>
+  <tr><td>6</td><td><a href="phase-6-data-isolation.html">Data Isolation (tools &amp; memory)</a></td><td>Can tenant data leak across tenants?</td><td><span class="pill good">Done</span></td></tr>
+  <tr><td>7</td><td>IAM Least Privilege</td><td>Does any role have more than it needs?</td><td><span class="pill info">Pending</span></td></tr>
+  <tr><td>8</td><td>Observability as a Security Control</td><td>Audit trail; what's exposed in traces?</td><td><span class="pill info">Pending</span></td></tr>
+  <tr><td>9</td><td>Network Posture</td><td>Public vs private; endpoint exposure.</td><td><span class="pill info">Pending</span></td></tr>
+  <tr><td>10</td><td>Known Gaps &amp; Remediation (P5)</td><td>Guardrails, BFF auth, content-in-logs…</td><td><span class="pill info">Pending</span></td></tr>
+</table>
+
+<footer class="doc">Evidence captured live from account 001961766007 (us-east-1). Dev environment, synthetic data.</footer>
+</div>
+</body>
+</html>

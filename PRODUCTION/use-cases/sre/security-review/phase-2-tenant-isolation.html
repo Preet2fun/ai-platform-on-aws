@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Security Review — Layer 2: Tenant Identity &amp; Isolation</title>
+<link rel="stylesheet" href="assets/review.css" />
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <div class="crumbs">SRE Agentic Platform · Security Review · AWS Bedrock AgentCore</div>
+  <h1>Layer 2 — Tenant Identity &amp; Isolation</h1>
+  <div class="sub">How the tenant is <i>proven</i> (not trusted), and how one tenant is prevented from touching another tenant's data.</div>
+  <div class="meta">
+    <span><b>Account:</b> 001961766007</span>
+    <span><b>Region:</b> us-east-1</span>
+    <span><b>Enforced in:</b> supervisor <code>_resolve_tenant()</code></span>
+    <span><b>Tenants:</b> acme-retail, globex-fintech</span>
+    <span><b>Status:</b> <span class="pill good">Enforced · Spoof-tested live</span></span>
+  </div>
+</header>
+
+<h2>1. What this layer is</h2>
+<p>
+Layer 1 proved <i>a known client</i> is calling. It did <b>not</b> decide <i>which tenant's data</i>
+that caller may touch — recall the decoded token carried a <code>client_id</code> and a
+<code>scope</code>, but <b>no tenant claim</b>. Layer 2 is where the multi-tenant boundary becomes
+real: the supervisor converts the <b>verified</b> <code>client_id</code> into a tenant, and refuses
+to let a caller act as any other tenant.
+</p>
+<p>
+This is the single most important control in a multi-tenant platform: it is the difference between
+"tenant isolation by convention" (the caller politely tells us who they are) and "tenant isolation
+by enforcement" (we derive identity from a cryptographically verified token and reject anything that
+disagrees). We implement the latter.
+</p>
+
+<div class="callout term">
+  <span class="label">Terminology</span>
+  <ul>
+    <li><b>Tenant:</b> one isolated customer environment. Here, <code>acme-retail</code> (an
+      e-commerce platform) and <code>globex-fintech</code> (a payments/ledger platform). Each has its
+      own synthetic telemetry, its own incident scenarios, and its own memory namespace.</li>
+    <li><b>Verified claim vs. request body:</b> a <b>claim</b> inside the JWT is signed by Cognito and
+      validated by the AgentCore platform — it cannot be altered by the caller. A value in the
+      <b>request body</b> is just data the caller typed — it can be anything. Trusting the body for
+      identity is the classic multi-tenant vulnerability; we trust only the claim.</li>
+    <li><b>client_id → tenant mapping:</b> a small, server-side lookup table (held as an environment
+      variable on the supervisor) that maps each verified Cognito <code>client_id</code> to exactly
+      one tenant. The caller never sees or controls this map.</li>
+    <li><b>RequestContext:</b> the internal object the supervisor builds once tenant is resolved. It
+      carries <code>tenant_id</code> + <code>scenario_id</code> + <code>session_id</code> down every
+      subsequent hop (A2A calls, tool calls, memory) so the tenant boundary is honoured everywhere,
+      not just at the front door.</li>
+  </ul>
+</div>
+
+<h2>2. Architecture — where tenant is decided</h2>
+<div class="flow">
+<svg viewBox="0 0 960 300" width="100%" role="img" aria-label="Tenant resolution architecture" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
+  <defs>
+    <marker id="a2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#58a6ff"/></marker>
+    <marker id="a2bad" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#f85149"/></marker>
+  </defs>
+  <!-- verified token in -->
+  <rect x="20" y="120" width="180" height="70" rx="8" fill="#1c2330" stroke="#30363d"/>
+  <text x="34" y="146" fill="#e6edf3" font-size="13">Verified JWT (Layer 1)</text>
+  <text x="34" y="164" fill="#9da7b3" font-size="11">client_id = 66f0...d37db</text>
+  <text x="34" y="178" fill="#9da7b3" font-size="11">(+ optional body tenant_id)</text>
+  <!-- resolver -->
+  <rect x="300" y="100" width="230" height="110" rx="8" fill="#1c2330" stroke="#58a6ff"/>
+  <text x="314" y="124" fill="#e6edf3" font-size="13">supervisor _resolve_tenant()</text>
+  <text x="314" y="144" fill="#9da7b3" font-size="11">1. read client_id from JWT</text>
+  <text x="314" y="160" fill="#9da7b3" font-size="11">2. map client_id → tenant</text>
+  <text x="314" y="176" fill="#9da7b3" font-size="11">3. if body tenant_id differs</text>
+  <text x="314" y="190" fill="#9da7b3" font-size="11">   → REJECT (403 spoof)</text>
+  <!-- map -->
+  <rect x="300" y="235" width="230" height="46" rx="6" fill="#161b22" stroke="#30363d"/>
+  <text x="314" y="254" fill="#9da7b3" font-size="11">CLIENT_TENANT_MAP (env):</text>
+  <text x="314" y="270" fill="#9da7b3" font-size="11">66f0..→acme · 5cnj..→globex</text>
+  <!-- ok out -->
+  <rect x="640" y="90" width="300" height="56" rx="8" fill="#1c2330" stroke="#3fb950"/>
+  <text x="654" y="113" fill="#e6edf3" font-size="13">RequestContext(tenant=acme-retail)</text>
+  <text x="654" y="131" fill="#9da7b3" font-size="11">threaded to A2A, tools, memory</text>
+  <!-- reject out -->
+  <rect x="640" y="170" width="300" height="50" rx="8" fill="#1c2330" stroke="#f85149"/>
+  <text x="654" y="192" fill="#e6edf3" font-size="13">403 — tenant mismatch / unmapped</text>
+  <text x="654" y="209" fill="#9da7b3" font-size="11">investigation never starts</text>
+  <!-- edges -->
+  <line x1="200" y1="150" x2="298" y2="150" stroke="#58a6ff" stroke-width="2" marker-end="url(#a2)"/>
+  <line x1="530" y1="125" x2="638" y2="118" stroke="#3fb950" stroke-width="2" marker-end="url(#a2)"/>
+  <line x1="530" y1="185" x2="638" y2="192" stroke="#f85149" stroke-width="2" marker-end="url(#a2bad)"/>
+  <line x1="415" y1="235" x2="415" y2="212" stroke="#30363d" stroke-width="1.5" stroke-dasharray="3 3"/>
+</svg>
+</div>
+
+<h2>3. The enforcement logic (actual code)</h2>
+<p>This is the real function on the deployed supervisor (<code>agents/supervisor/main.py</code>,
+line 100 is the spoof check — it appears in the live log below).</p>
+<pre><code>def _resolve_tenant(request, body):
+    # When auth is enforced (client->tenant map present), tenant comes from the
+    # VERIFIED JWT client_id; the body tenant_id is ignored / only cross-checked.
+    if not AUTH_ENFORCED:
+        return body.get("tenant_id", ""), None            # local dev only
+
+    client_id = _client_id_from_jwt(request.headers["Authorization"])
+    if not client_id:
+        return None, "missing or unreadable bearer token"
+    tenant = CLIENT_TENANT_MAP.get(client_id)
+    if not tenant:
+        return None, f"client_id '{client_id}' is not mapped to any tenant"
+
+    # If the caller ALSO put tenant_id in the body, it must match the verified identity.
+    body_tenant = body.get("tenant_id")
+    if body_tenant and body_tenant != tenant:
+        log.warning("rejecting tenant spoof attempt: body=%s verified=%s", body_tenant, tenant)
+        return None, "request tenant_id does not match authenticated client identity"
+    return tenant, None</code></pre>
+
+<div class="callout good">
+  <span class="label">The key design decision</span>
+  Tenant is derived from the <b>verified <code>client_id</code></b>, never trusted from the body. A
+  body <code>tenant_id</code> is <i>only</i> used to actively <b>detect spoofing</b> (if it disagrees
+  with the verified identity, reject). This means a caller cannot elevate to another tenant even if
+  they send a crafted body.
+</div>
+
+<h2>4. Request / response flow</h2>
+
+<h3>Step A — a normal, correct call (tenant acme-retail)</h3>
+<pre><code>POST /invocations
+Authorization: Bearer &lt;acme JWT, client_id=66f0...d37db&gt;
+body: { "scenario_id": "rds-connection-exhaustion", "alarm": "..." }   # no tenant_id
+
+supervisor._resolve_tenant():
+  client_id 66f0...d37db  → CLIENT_TENANT_MAP → "acme-retail"
+  body tenant_id: (none)  → no conflict
+→ tenant = acme-retail → investigation runs against ONLY acme's data</code></pre>
+
+<h3>Step B — a spoof attempt (acme's token claiming to be globex)</h3>
+<pre><code>POST /invocations
+Authorization: Bearer &lt;acme JWT, client_id=66f0...d37db&gt;
+body: { "scenario_id": "...", "alarm": "...", "tenant_id": "globex-fintech" }   # LIE
+
+supervisor._resolve_tenant():
+  client_id 66f0...d37db  → verified tenant = "acme-retail"
+  body tenant_id = "globex-fintech"  →  acme-retail ≠ globex-fintech
+→ 403 "request tenant_id does not match authenticated client identity"   (investigation never starts)</code></pre>
+
+<h3>3A. End-to-end sequence — correct call vs. spoof vs. unmapped client</h3>
+<div class="flow">
+<svg viewBox="0 0 980 470" width="100%" role="img" aria-label="Tenant resolution sequence" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
+  <defs>
+    <marker id="t-arr" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#58a6ff"/></marker>
+    <marker id="t-arrR" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#9da7b3"/></marker>
+    <marker id="t-bad" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#f85149"/></marker>
+  </defs>
+  <g stroke="#30363d" stroke-dasharray="3 4">
+    <line x1="130" y1="64" x2="130" y2="450"/>
+    <line x1="470" y1="64" x2="470" y2="450"/>
+    <line x1="820" y1="64" x2="820" y2="450"/>
+  </g>
+  <g font-size="12">
+    <rect x="40" y="26" width="180" height="32" rx="6" fill="#1c2330" stroke="#30363d"/><text x="130" y="47" fill="#e6edf3" text-anchor="middle">Caller (acme-retail JWT)</text>
+    <rect x="380" y="26" width="180" height="32" rx="6" fill="#1c2330" stroke="#30363d"/><text x="470" y="47" fill="#e6edf3" text-anchor="middle">Supervisor _resolve_tenant</text>
+    <rect x="730" y="26" width="180" height="32" rx="6" fill="#1c2330" stroke="#30363d"/><text x="820" y="47" fill="#e6edf3" text-anchor="middle">Investigation (tenant-scoped)</text>
+  </g>
+
+  <rect x="24" y="74" width="932" height="118" rx="8" fill="rgba(63,185,80,.06)" stroke="rgba(63,185,80,.35)"/>
+  <text x="36" y="92" fill="#3fb950" font-size="12" font-weight="700">CASE 1 — correct call (no body tenant_id)</text>
+  <g font-size="11" fill="#c9d1d9">
+    <line x1="130" y1="118" x2="468" y2="118" stroke="#58a6ff" stroke-width="2" marker-end="url(#t-arr)"/>
+    <text x="134" y="112">body{scenario_id, alarm}</text>
+    <rect x="360" y="128" width="300" height="30" rx="4" fill="#161b22" stroke="#30363d"/><text x="372" y="147" fill="#9da7b3">client_id→acme-retail; no body conflict</text>
+    <line x1="470" y1="176" x2="818" y2="176" stroke="#58a6ff" stroke-width="2" marker-end="url(#t-arr)"/>
+    <text x="474" y="170">run against acme-retail data only</text>
+  </g>
+
+  <rect x="24" y="200" width="932" height="128" rx="8" fill="rgba(248,81,73,.05)" stroke="rgba(248,81,73,.3)"/>
+  <text x="36" y="218" fill="#f85149" font-size="12" font-weight="700">CASE 2 — spoof: acme token, body tenant_id=globex-fintech</text>
+  <g font-size="11" fill="#c9d1d9">
+    <line x1="130" y1="244" x2="468" y2="244" stroke="#f85149" stroke-width="1.8" marker-end="url(#t-bad)"/>
+    <text x="134" y="238">body{..., tenant_id:"globex-fintech"}</text>
+    <rect x="320" y="254" width="340" height="44" rx="4" fill="#161b22" stroke="#30363d"/>
+    <text x="332" y="272" fill="#9da7b3">verified tenant=acme-retail ≠ body globex-fintech</text>
+    <text x="332" y="288" fill="#f85149">log: "rejecting tenant spoof attempt" (main.py:100)</text>
+    <line x1="468" y1="314" x2="132" y2="314" stroke="#f85149" stroke-width="1.8" stroke-dasharray="5 3" marker-end="url(#t-bad)"/>
+    <text x="134" y="308" fill="#f85149">403 — tenant mismatch (investigation never starts)</text>
+  </g>
+
+  <rect x="24" y="336" width="932" height="110" rx="8" fill="rgba(210,153,34,.05)" stroke="rgba(210,153,34,.3)"/>
+  <text x="36" y="354" fill="#d29922" font-size="12" font-weight="700">CASE 3 — token from a client_id not in the map</text>
+  <g font-size="11" fill="#c9d1d9">
+    <line x1="130" y1="380" x2="468" y2="380" stroke="#d29922" stroke-width="1.8" marker-end="url(#t-bad)"/>
+    <text x="134" y="374">valid JWT, unknown client_id</text>
+    <rect x="360" y="390" width="300" height="28" rx="4" fill="#161b22" stroke="#30363d"/><text x="372" y="408" fill="#9da7b3">CLIENT_TENANT_MAP.get(client_id) → none</text>
+    <line x1="468" y1="434" x2="132" y2="434" stroke="#d29922" stroke-width="1.8" stroke-dasharray="5 3" marker-end="url(#t-bad)"/>
+    <text x="134" y="428" fill="#d29922">403 — client_id is not mapped to any tenant</text>
+  </g>
+</svg>
+</div>
+
+<h2>5. The live evidence (captured this account, this review)</h2>
+
+<h4>The client → tenant map (supervisor env var <code>SRE_CLIENT_TENANT_MAP</code>)</h4>
+<pre><code>{
+  "66f0eb5m3ri4ad02d6hjjd37db": "acme-retail",
+  "5cnjgnqi4o2avg62egtu6be4tt": "globex-fintech"
+}</code></pre>
+
+<h4>The spoof test — executed live</h4>
+<p>We sent an <b>acme-retail</b> token with a body claiming <code>tenant_id: "globex-fintech"</code>:</p>
+<pre><code>→ HTTP 424  { "message": "Received error (403) from runtime..." }</code></pre>
+<p>And the supervisor's own log proves <i>our code</i> rejected it (note the file/line, the verified-vs-body values, and the trace id):</p>
+<pre><code>2026-10-27 06:51:52 WARNING [sre.supervisor] [main.py:100]
+  [trace_id=6ae04a07770667db765c5b425068014c]
+  - rejecting tenant spoof attempt: body=globex-fintech verified=acme-retail
+
+POST /invocations → http.response.status_code = 403</code></pre>
+
+<div class="callout">
+  <span class="label">Note on the 424 vs 403</span>
+  Our container returns <b>403</b> (seen in the span: <code>http.response.status_code=403</code>).
+  The AgentCore platform wraps a non-2xx container response as a <b>424 Failed Dependency</b> to the
+  external caller. Both mean the same thing: the request was refused. The authoritative status is the
+  container's 403.
+</div>
+
+<h4>Isolation carries downstream (tenant namespacing)</h4>
+<p>Tenant isolation is not only enforced at the front door — the resolved <code>tenant_id</code> is
+threaded through every downstream hop. Two places make this concrete (detailed in Layer 6):</p>
+<ul>
+  <li><b>Tools:</b> every tool call requires <code>tenant_id</code>; the tools Lambda refuses a
+    scenario that doesn't belong to that tenant (globex asking for an acme scenario → 404).</li>
+  <li><b>Memory:</b> episodes are stored under per-tenant namespaces
+    (<code>sre/acme-retail/episodes</code> vs <code>sre/globex-fintech/episodes</code>); a retrieve
+    for one tenant can never match another's namespace.</li>
+</ul>
+
+<div class="console">
+  <span class="label">Validate in the AWS Console</span>
+  <ol>
+    <li><b>Bedrock AgentCore</b> → Agent Runtime → <code>sre_agentic_dev_supervisor</code> →
+      Environment variables → <code>SRE_CLIENT_TENANT_MAP</code>: confirm the two client→tenant entries.</li>
+    <li><b>CloudWatch</b> → Log groups →
+      <code>/aws/bedrock-agentcore/runtimes/sre_agentic_dev_supervisor-...-DEFAULT</code> →
+      search <code>spoof</code>: you will see the WARNING log line with the 403 and the trace id.</li>
+    <li><b>CloudWatch</b> → Transaction Search / GenAI Observability → open the trace id from the
+      log: the <code>POST /invocations</code> span shows <code>http.response.status_code = 403</code>
+      and the investigation span is absent (it never started).</li>
+  </ol>
+</div>
+
+<div class="console">
+  <span class="label">Re-run the spoof test yourself (CLI)</span>
+<pre><code>export AWS_PROFILE=agentcore AWS_REGION=us-east-1 AWS_PAGER=""
+POOL=us-east-1_wWlzIHoRM; ACME=66f0eb5m3ri4ad02d6hjjd37db
+CS=$(aws cognito-idp describe-user-pool-client --user-pool-id $POOL --client-id $ACME \
+      --query 'UserPoolClient.ClientSecret' --output text)
+TOK=$(curl -s -X POST "https://sre-agentic-dev-auth.auth.us-east-1.amazoncognito.com/oauth2/token" \
+      -H "Authorization: Basic $(printf '%s:%s' "$ACME" "$CS" | base64)" \
+      -d "grant_type=client_credentials&amp;scope=sre-api/invoke" \
+      | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+# acme token but body claims globex → expect 403/424:
+ARN=arn:aws:bedrock-agentcore:us-east-1:001961766007:runtime/sre_agentic_dev_supervisor-dSf6vD9ngf
+ESC=$(python3 -c "import urllib.parse;print(urllib.parse.quote('$ARN',safe=''))")
+curl -s -w "\nHTTP %{http_code}\n" -X POST \
+  "https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/$ESC/invocations?qualifier=DEFAULT" \
+  -H "Authorization: Bearer $TOK" \
+  -d '{"scenario_id":"rds-connection-exhaustion","alarm":"x","tenant_id":"globex-fintech"}'</code></pre>
+</div>
+
+<h2>6. Security assessment</h2>
+<h3>Strengths</h3>
+<ul>
+  <li><b>Enforced, not cooperative</b> — tenant derives from a cryptographically verified claim; the body cannot override it.</li>
+  <li><b>Active spoof detection</b> — a mismatched body isn't just ignored, it is rejected and logged (audit signal).</li>
+  <li><b>Fail-closed</b> — an unmapped client or missing token yields 403; the default is deny.</li>
+  <li><b>Isolation propagates</b> — <code>tenant_id</code> rides the RequestContext into tools and memory, so the boundary holds end-to-end (Layer 6), not just at entry.</li>
+</ul>
+
+<h3>Findings</h3>
+<div class="finding"><span class="id pill info">F2-A · By design</span>
+  <b>The map is an environment variable, not a datastore.</b> Simple and auditable for a small tenant
+  set, but adding/removing a tenant requires redeploying the supervisor. At scale, move the mapping
+  to a managed store (e.g. DynamoDB) or encode tenant directly in the token (per-tenant scope /
+  custom claim via a pre-token-generation Lambda) so no redeploy is needed.</div>
+<div class="finding"><span class="id pill warn">F2-B · Low/Med</span>
+  <b>Tenant trust depends on one-client-per-tenant discipline.</b> Isolation is correct only if each
+  Cognito client belongs to exactly one tenant. A process/control should prevent a client from being
+  reused across tenants. Consider a tag/ownership check at client-creation time.</div>
+<div class="finding"><span class="id pill info">F2-C · Observation</span>
+  <b>Signature re-validation is skipped in the container.</b> <code>_client_id_from_jwt</code> reads
+  the claim without re-verifying the signature — correct, because the AgentCore platform already
+  verified it upstream (Layer 1). This is safe <i>only</i> because the authorizer is enforced; if the
+  authorizer were ever removed, this would become a trust gap. Documented so the dependency is explicit.</div>
+
+<div class="callout good">
+  <span class="label">Verdict</span>
+  Layer 2 is <b>strong and the linchpin of multi-tenancy</b>. Tenant identity is enforced from a
+  verified token, spoofing is actively rejected (proven live with a 403 + audit log), and the
+  boundary propagates downstream. Findings are scale/operational hardening, not holes.
+</div>
+
+<div class="nav">
+  <span><a href="phase-1-inbound-authentication.html">← Layer 1: Inbound Authentication</a></span>
+  <span><a href="phase-3-cross-runtime-a2a.html">Next → Layer 3: Cross-runtime Auth (A2A)</a></span>
+</div>
+
+<footer class="doc">
+  SRE Agentic Platform · Security Review · Layer 2 of 10 · Evidence captured live from account
+  001961766007 (us-east-1). Dev environment, synthetic data.
+</footer>
+
+</div>
+</body>
+</html>
